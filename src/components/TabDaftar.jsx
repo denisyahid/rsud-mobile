@@ -2,6 +2,27 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Swal from 'sweetalert2';
 import { API_BASE, NIK_VERIFY_URL } from '../constants/api';
 
+// ─── Validasi lokal format NIK (fallback bila layanan verifikasi online down) ──
+// Struktur NIK: 2 digit provinsi + 2 digit kab/kota + 2 digit kecamatan +
+// 6 digit tanggal lahir (ddmmyy; wanita +40) + 4 digit serial.
+function validateNikLocal(nik) {
+  if (!/^\d{16}$/.test(nik)) return { ok: false, message: 'NIK harus 16 digit angka' };
+  if (/^(\d)\1+$/.test(nik)) return { ok: false, message: 'NIK tidak valid (digit berulang)' };
+  const prov = parseInt(nik.slice(0, 2), 10);
+  if (prov < 11 || prov > 96) return { ok: false, message: 'Kode provinsi pada NIK tidak valid' };
+  let dd = parseInt(nik.slice(6, 8), 10);
+  const mm = parseInt(nik.slice(8, 10), 10);
+  const yy = parseInt(nik.slice(10, 12), 10);
+  if (dd > 40) dd -= 40; // kode tanggal untuk perempuan
+  if (mm < 1 || mm > 12) return { ok: false, message: 'Bulan lahir pada NIK tidak valid' };
+  const fullYear = yy <= (new Date().getFullYear() % 100) ? 2000 + yy : 1900 + yy;
+  const t = new Date(fullYear, mm - 1, dd);
+  if (dd < 1 || t.getDate() !== dd || t.getMonth() !== mm - 1) {
+    return { ok: false, message: 'Tanggal lahir pada NIK tidak valid' };
+  }
+  return { ok: true, message: 'Format NIK valid' };
+}
+
 export default function TabDaftar({
   masterData,
   onRegister,
@@ -272,14 +293,24 @@ export default function TabDaftar({
           return;
         }
       } catch (e) {
+        // ── FALLBACK: layanan verifikasi NIK online tidak terjangkau ──
+        // Jangan blokir pendaftaran hanya karena layanan pihak ketiga down.
+        // Terima NIK bila lolos validasi format lokal, dengan peringatan.
         console.error('Gagal verifikasi NIK eksternal:', e);
+        const local = validateNikLocal(nik);
+        if (!local.ok) {
+          setNikStatus({ exists: false, tone: 'error', message: local.message });
+          setNikValid(false);
+          setShowFullForm(false);
+          return;
+        }
         setNikStatus({
           exists: false,
-          tone: 'error',
-          message: 'Gagal memverifikasi NIK. Periksa koneksi internet Anda lalu coba lagi.'
+          tone: 'warn',
+          message: 'Layanan verifikasi NIK online sedang tidak dapat dihubungi. NIK diterima berdasarkan validasi format — pastikan NIK sesuai KTP.'
         });
-        setNikValid(false);
-        setShowFullForm(false);
+        setNikValid(true);
+        setShowFullForm(true);
         return;
       }
 
@@ -845,9 +876,11 @@ export default function TabDaftar({
             {errors.nik && <div className="input-error">{errors.nik}</div>}
             {nikStatus && (
               <div className={`mt-2 p-2.5 rounded-lg text-xs font-medium ${
-                nikStatus.exists || nikStatus.tone === 'error'
-                  ? 'bg-red-50 text-red-700 border border-red-200'
-                  : 'bg-green-50 text-green-700 border border-green-200'
+                nikStatus.tone === 'warn'
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                  : nikStatus.exists || nikStatus.tone === 'error'
+                    ? 'bg-red-50 text-red-700 border border-red-200'
+                    : 'bg-green-50 text-green-700 border border-green-200'
               }`}>
                 {nikStatus.message}
               </div>
