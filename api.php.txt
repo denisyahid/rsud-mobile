@@ -1,0 +1,1564 @@
+<?php
+// api.php - Backend API untuk aplikasi pasien RSUD Malangbong
+
+// ============================================================
+// ENABLE ERROR LOGGING
+// ============================================================
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/php-error.log');
+error_reporting(E_ALL);
+
+// ============================================================
+// CORS HEADERS - Penting untuk akses dari domain lain
+// ============================================================
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+
+if (!empty($origin)) {
+    header("Access-Control-Allow-Origin: $origin");
+    header("Vary: Origin");
+    header("Access-Control-Allow-Credentials: true");
+}
+
+header("Access-Control-Allow-Methods: GET, POST, OPTIONS");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With");
+
+// Handle preflight request
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit;
+}
+
+// ============================================================
+// SESSION START - Improved untuk debugging
+// ============================================================
+$isSecure = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on';
+
+session_set_cookie_params([
+    'lifetime' => 0,
+    'path' => '/',
+    'secure' => $isSecure, // true hanya jika HTTPS
+    'httponly' => true,
+    'samesite' => $isSecure ? 'None' : 'Lax'
+]);
+session_start();
+
+// Log session untuk debug
+error_log("=== SESSION DATA ===");
+error_log("Session ID: " . session_id());
+error_log("Session Data: " . json_encode($_SESSION));
+error_log("Is Secure: " . ($isSecure ? 'true' : 'false'));
+
+// ============================================================
+// KONEKSI DATABASE
+// ============================================================
+$host = getenv('DB_HOST') ?: "192.168.22.81";
+$port = getenv('DB_PORT') ?: "5792";
+$dbname = getenv('DB_NAME') ?: "rsud_malangbong";
+$user = getenv('DB_USER') ?: "postgres";
+$password = getenv('DB_PASSWORD') ?: "Tr4nsm3d!c MaRe#T3aM";
+
+try {
+    $pdo = new PDO("pgsql:host=$host;port=$port;dbname=$dbname", $user, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    error_log("Database connected successfully");
+} catch (PDOException $e) {
+    error_log("Database connection failed: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode([
+        'error' => 'Koneksi database gagal: ' . $e->getMessage(),
+        'debug' => [
+            'host' => $host,
+            'port' => $port,
+            'dbname' => $dbname,
+            'user' => $user
+        ]
+    ]);
+    exit;
+}
+
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
+function respond($data, $status = 200) {
+    http_response_code($status);
+    header('Content-Type: application/json');
+    // Tambahkan debug info jika error
+    if ($status >= 400 && isset($data['error'])) {
+        $data['debug_timestamp'] = date('Y-m-d H:i:s');
+        $data['debug_session_id'] = session_id();
+        $data['debug_logged_in'] = isset($_SESSION['pasien_id']);
+    }
+    echo json_encode($data);
+    exit;
+}
+
+function isLoggedIn() {
+    return isset($_SESSION['pasien_id']);
+}
+
+/**
+ * Generate UUID v4 like string (untuk norec)
+ */
+function generateNorec() {
+    return sprintf('%08x-%04x-%04x-%04x-%04x%08x',
+        mt_rand(0, 0xffffffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffffffff)
+    );
+}
+
+// ============================================================
+// CHECKIN FUNCTIONS - Include from checkin.php or define here
+// ============================================================
+
+/**
+ * Generate UUID untuk checkin
+ */
+function generateUuid() {
+    return sprintf('%08x-%04x-%04x-%04x-%04x%08x',
+        mt_rand(0, 0xffffffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0xffffffff)
+    );
+}
+
+/**
+ * Generate Struk Number
+ */
+function generateStrukNumber($pdo, $kdProfile = 1) {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT COALESCE(
+                MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 
+                0
+            ) AS max_no 
+            FROM strukpelayanan_t 
+            WHERE kdprofile = :kdprofile 
+              AND nostruk LIKE 'S%'
+              AND LENGTH(nostruk) > 1
+              AND SUBSTRING(nostruk FROM 2) ~ '^[0-9]+$'
+        ");
+        $stmt->execute([':kdprofile' => $kdProfile]);
+        $result = $stmt->fetch();
+        $maxNo = (int)($result['max_no'] ?? 0);
+        $nextNo = $maxNo + 1;
+        return 'S' . str_pad($nextNo, 9, '0', STR_PAD_LEFT);
+    } catch (Exception $e) {
+        error_log("Error generating struk number: " . $e->getMessage());
+        // Fallback: gunakan timestamp
+        return 'S' . date('YmdHis') . rand(100, 999);
+    }
+}
+
+/**
+ * Validate Checkin Barcode - Lebih fleksibel
+ */
+function validateCheckinBarcode($barcode) {
+    error_log("Validating barcode: " . $barcode);
+    
+    // Format: CHECKIN-RSUD-MALANGBONG-YYYYMMDD
+    $pattern = '/^CHECKIN-RSUD-MALANGBONG-(\d{8})$/';
+    
+    if (!preg_match($pattern, $barcode, $matches)) {
+        error_log("Barcode format invalid: " . $barcode);
+        return false;
+    }
+    
+    $datePart = $matches[1];
+    $today = date('Ymd');
+    $yesterday = date('Ymd', strtotime('-1 day'));
+    $tomorrow = date('Ymd', strtotime('+1 day'));
+    
+    // Validasi: H-1, hari ini, atau H+1 (flexible untuk perbedaan timezone)
+    $isValid = in_array($datePart, [$yesterday, $today, $tomorrow]);
+    
+    error_log("Barcode date: $datePart, Today: $today, Valid: " . ($isValid ? 'true' : 'false'));
+    
+    return $isValid;
+}
+
+// ============================================================
+// HANDLE REQUEST
+// ============================================================
+$action = $_REQUEST['action'] ?? '';
+
+error_log("=== REQUEST START ===");
+error_log("Action: " . $action);
+error_log("Method: " . $_SERVER['REQUEST_METHOD']);
+error_log("Input raw: " . file_get_contents('php://input'));
+error_log("GET params: " . json_encode($_GET));
+error_log("POST params: " . json_encode($_POST));
+
+switch ($action) {
+    // ---------- LOGIN ----------
+    case 'login':
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            respond(['error' => 'Method not allowed'], 405);
+        }
+        $input = json_decode(file_get_contents('php://input'), true);
+        $identifier = trim($input['identifier'] ?? $input['nocm'] ?? $input['nik'] ?? '');
+        if (empty($identifier)) {
+            respond(['error' => 'No RM atau NIK tidak boleh kosong']);
+        }
+        $stmt = $pdo->prepare("SELECT id, namapasien, nocm FROM pasien_m 
+                               WHERE (nocm = :identifier OR noidentitas = :identifier) 
+                               AND statusenabled = true");
+        $stmt->execute([':identifier' => $identifier]);
+        $pasien = $stmt->fetch();
+        if ($pasien) {
+            $_SESSION['pasien_id'] = $pasien['id'];
+            $_SESSION['pasien_nama'] = $pasien['namapasien'];
+            $_SESSION['pasien_nocm'] = $pasien['nocm'];
+            error_log("Login success for pasien: " . $pasien['id']);
+            respond(['success' => true, 'data' => $pasien]);
+        } else {
+            error_log("Login failed for identifier: " . $identifier);
+            respond(['error' => 'Data tidak ditemukan atau tidak aktif']);
+        }
+        break;
+
+    // ---------- LOGOUT ----------
+    case 'logout':
+        session_destroy();
+        respond(['success' => true]);
+        break;
+
+    // ---------- DAFTAR ONLINE ----------
+    case 'daftar_online':
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            respond(['error' => 'Method not allowed'], 405);
+        }
+        $input = json_decode(file_get_contents('php://input'), true);
+
+        // Data kunjungan (wajib)
+        $ruanganId = intval($input['ruangan_id'] ?? 0);
+        $dokterId = intval($input['dokter_id'] ?? 0);
+        $tglKunjungan = trim($input['tgl_kunjungan'] ?? date('Y-m-d'));
+
+        if (empty($ruanganId)) respond(['error' => 'Poliklinik Tujuan wajib dipilih']);
+        if (empty($dokterId)) respond(['error' => 'Dokter wajib dipilih']);
+
+        try {
+            $pdo->beginTransaction();
+
+            $isLoggedIn = isset($_SESSION['pasien_id']);
+            $pasienId = $_SESSION['pasien_id'] ?? null;
+            $noCm = null;
+            $namaPasien = null;
+
+            // Jika sudah login, ambil data pasien dari session
+            if ($isLoggedIn) {
+                $stmt = $pdo->prepare("SELECT id, nocm, namapasien FROM pasien_m WHERE id = :id AND statusenabled = true");
+                $stmt->execute([':id' => $pasienId]);
+                $pasien = $stmt->fetch();
+                if (!$pasien) {
+                    $pdo->rollBack();
+                    respond(['error' => 'Data pasien tidak ditemukan']);
+                }
+                $noCm = $pasien['nocm'];
+                $namaPasien = $pasien['namapasien'];
+
+                // ⛔ Cegah double booking
+                $stmtAktif = $pdo->prepare("
+                    SELECT COUNT(*) AS total 
+                    FROM pasiendaftar_t 
+                    WHERE nocmfk = :pasien 
+                      AND DATE(tglregistrasi) = CURRENT_DATE 
+                      AND statusenabled = true 
+                      AND tglpulang IS NULL
+                ");
+                $stmtAktif->execute([':pasien' => $pasienId]);
+                if (($stmtAktif->fetch()['total'] ?? 0) > 0) {
+                    $pdo->rollBack();
+                    respond(['error' => 'Anda masih memiliki kunjungan aktif hari ini yang belum selesai (belum pulang). Tidak dapat membuat reservasi baru ke poliklinik mana pun sampai kunjungan selesai.']);
+                }
+            } else {
+                // ---------- Pendaftaran Pasien Baru ----------
+                $nik = trim($input['nik'] ?? $input['noidentitas'] ?? '');
+                $namaPasien = trim($input['namapasien'] ?? '');
+                $tempatLahir = trim($input['tempatlahir'] ?? '');
+                $tglLahir = trim($input['tgllahir'] ?? '');
+                $jenisKelamin = intval($input['jeniskelamin'] ?? 0);
+                $nohp = trim($input['nohp'] ?? '');
+                $agama = !empty($input['agama']) ? intval($input['agama']) : null;
+                $kebangsaan = !empty($input['kebangsaan']) ? intval($input['kebangsaan']) : 1;
+                $negara = isset($input['negara']) && $input['negara'] !== '' ? intval($input['negara']) : 0;
+                $alamat = trim($input['alamat'] ?? '');
+                $rtrw = trim($input['rtrw'] ?? '');
+                $desakelurahanId = !empty($input['desakelurahan_id']) ? intval($input['desakelurahan_id']) : null;
+                $kecamatanId = !empty($input['kecamatan_id']) ? intval($input['kecamatan_id']) : null;
+                $kotakabupatenId = !empty($input['kotakabupaten_id']) ? intval($input['kotakabupaten_id']) : null;
+                $provinsiId = !empty($input['provinsi_id']) ? intval($input['provinsi_id']) : null;
+                $kodepos = trim($input['kodepos'] ?? '');
+                $namaIbu = trim($input['nama_ibu'] ?? '');
+                $email = trim($input['email'] ?? '');
+                $statusPerkawinan = !empty($input['status_perkawinan']) ? intval($input['status_perkawinan']) : null;
+                $goldar = !empty($input['goldar']) ? intval($input['goldar']) : null;
+                $pendidikan = !empty($input['pendidikan']) ? intval($input['pendidikan']) : null;
+                $pekerjaan = !empty($input['pekerjaan']) ? intval($input['pekerjaan']) : null;
+                $etnis = !empty($input['etnis']) ? intval($input['etnis']) : null;
+                $namaAyah = trim($input['nama_ayah'] ?? '');
+                $namaSuamiIstri = trim($input['nama_suami_istri'] ?? '');
+                $namaPenanggung = trim($input['nama_penanggung'] ?? '');
+                $hubunganPenanggung = !empty($input['hubungan_penanggung']) ? intval($input['hubungan_penanggung']) : null;
+                $telpPenanggung = trim($input['telp_penanggung'] ?? '');
+                $jenisKelaminPenanggung = !empty($input['jenis_kelamin_penanggung']) ? intval($input['jenis_kelamin_penanggung']) : null;
+                $alamatPenanggung = trim($input['alamat_penanggung'] ?? '');
+
+                // Validasi NIK
+                if (empty($nik)) respond(['error' => 'NIK / No Identitas wajib diisi']);
+                if (!preg_match('/^\d{16}$/', $nik)) {
+                    respond(['error' => 'NIK harus 16 digit angka']);
+                }
+                if (empty($namaPasien)) respond(['error' => 'Nama Pasien wajib diisi']);
+                if (empty($tempatLahir)) respond(['error' => 'Tempat Lahir wajib diisi']);
+                if (empty($tglLahir)) respond(['error' => 'Tanggal Lahir wajib diisi']);
+                if (empty($jenisKelamin)) respond(['error' => 'Jenis Kelamin wajib dipilih']);
+                if (empty($nohp)) respond(['error' => 'No HP / Ponsel wajib diisi']);
+                if (empty($alamat)) respond(['error' => 'Alamat Lengkap wajib diisi']);
+                if (empty($namaIbu)) respond(['error' => 'Nama Ibu Kandung wajib diisi']);
+
+                // Cek duplikasi NIK
+                $stmtCekNik = $pdo->prepare("SELECT id, nocm, namapasien FROM pasien_m WHERE noidentitas = :nik AND statusenabled = true LIMIT 1");
+                $stmtCekNik->execute([':nik' => $nik]);
+                $existing = $stmtCekNik->fetch();
+                if ($existing) {
+                    $pdo->rollBack();
+                    respond(['error' => "NIK ini sudah terdaftar atas nama " . $existing['namapasien'] . " (No RM: " . $existing['nocm'] . ")"]);
+                }
+
+                // Generate No CM
+                $stmtMaxCm = $pdo->query("SELECT MAX(CAST(nocm AS INTEGER)) AS max_cm FROM pasien_m WHERE nocm ~ '^[0-9]+$' AND LENGTH(nocm) <= 8");
+                $maxRow = $stmtMaxCm->fetch();
+                $nextCmInt = ($maxRow['max_cm'] ?? 0) + 1;
+                $noCm = str_pad($nextCmInt, 8, '0', STR_PAD_LEFT);
+
+                // Generate Pasien ID & Norec
+                $stmtMaxId = $pdo->query("SELECT MAX(CAST(id AS INTEGER)) AS max_id FROM pasien_m WHERE id ~ '^[0-9]+$'");
+                $maxIdRow = $stmtMaxId->fetch();
+                $pasienId = (string)(($maxIdRow['max_id'] ?? 0) + 1);
+                $pasienNorec = generateNorec();
+
+                // Insert Pasien Baru
+                $sqlPasien = "INSERT INTO pasien_m (
+                    id, kdprofile, statusenabled, norec, nocm, namapasien, namaexternal, reportdisplay,
+                    noidentitas, tempatlahir, tgllahir, objectjeniskelaminfk, nohp, notelepon,
+                    objectagamafk, objectkebangsaanfk, objectnegarafk, objectstatusperkawinanfk,
+                    objectgolongandarahfk, objectpendidikanfk, objectpekerjaanfk, objectsukufk,
+                    namaibu, namaayah, namasuamiistri, email, penanggungjawab, hubungankeluargapj,
+                    telponpenanggungjawab, jeniskelaminpenanggungjawab, alamatrmh, alamatlengkap, tgldaftar, qpasien
+                ) VALUES (
+                    :id, 1, true, :norec, :nocm, :namapasien, :namapasien, :namapasien,
+                    :noidentitas, :tempatlahir, :tgllahir, :jeniskelamin, :nohp, :nohp,
+                    :agama, :kebangsaan, :negara, :status_perkawinan,
+                    :goldar, :pendidikan, :pekerjaan, :etnis,
+                    :namaibu, :namaayah, :namasuamiistri, :email, :penanggungjawab, :hubungankeluargapj,
+                    :telponpenanggungjawab, :jeniskelaminpenanggungjawab, :alamatrmh, :alamatlengkap, NOW(), '1'
+                )";
+                $stmtInsPasien = $pdo->prepare($sqlPasien);
+                $stmtInsPasien->execute([
+                    ':id' => $pasienId,
+                    ':norec' => $pasienNorec,
+                    ':nocm' => $noCm,
+                    ':namapasien' => strtoupper($namaPasien),
+                    ':noidentitas' => $nik,
+                    ':tempatlahir' => strtoupper($tempatLahir),
+                    ':tgllahir' => $tglLahir,
+                    ':jeniskelamin' => $jenisKelamin,
+                    ':nohp' => $nohp,
+                    ':agama' => $agama,
+                    ':kebangsaan' => $kebangsaan,
+                    ':negara' => $negara,
+                    ':status_perkawinan' => $statusPerkawinan,
+                    ':goldar' => $goldar,
+                    ':pendidikan' => $pendidikan,
+                    ':pekerjaan' => $pekerjaan,
+                    ':etnis' => $etnis,
+                    ':namaibu' => strtoupper($namaIbu),
+                    ':namaayah' => strtoupper($namaAyah),
+                    ':namasuamiistri' => strtoupper($namaSuamiIstri),
+                    ':email' => $email,
+                    ':penanggungjawab' => strtoupper($namaPenanggung),
+                    ':hubungankeluargapj' => $hubunganPenanggung,
+                    ':telponpenanggungjawab' => $telpPenanggung,
+                    ':jeniskelaminpenanggungjawab' => $jenisKelaminPenanggung,
+                    ':alamatrmh' => strtoupper($alamatPenanggung),
+                    ':alamatlengkap' => strtoupper($alamat)
+                ]);
+
+                // Insert Alamat Pasien
+                $alamatNorec = generateNorec();
+                $stmtMaxAlmId = $pdo->query("SELECT MAX(CAST(id AS INTEGER)) AS max_id FROM alamat_m WHERE id ~ '^[0-9]+$'");
+                $maxAlmRow = $stmtMaxAlmId->fetch();
+                $alamatId = (string)(($maxAlmRow['max_id'] ?? 0) + 1);
+
+                $sqlAlamat = "INSERT INTO alamat_m (
+                    id, kdprofile, statusenabled, norec, nocmfk, alamatlengkap, rtrw,
+                    objectpropinsifk, objectkotakabupatenfk, objectkecamatanfk, objectdesakelurahanfk,
+                    kodepos, objectjenisalamatfk, objecthubungankeluargafk, created_at
+                ) VALUES (
+                    :id, 1, true, :norec, :nocmfk, :alamatlengkap, :rtrw,
+                    :propinsi, :kota, :kecamatan, :desa,
+                    :kodepos, '1', 1, NOW()
+                )";
+                $stmtInsAlamat = $pdo->prepare($sqlAlamat);
+                $stmtInsAlamat->execute([
+                    ':id' => $alamatId,
+                    ':norec' => $alamatNorec,
+                    ':nocmfk' => $pasienId,
+                    ':alamatlengkap' => strtoupper($alamat),
+                    ':rtrw' => $rtrw,
+                    ':propinsi' => $provinsiId,
+                    ':kota' => $kotakabupatenId,
+                    ':kecamatan' => $kecamatanId,
+                    ':desa' => $desakelurahanId,
+                    ':kodepos' => $kodepos
+                ]);
+
+                // Set session untuk auto-login nanti
+                $_SESSION['pasien_id'] = $pasienId;
+                $_SESSION['pasien_nama'] = strtoupper($namaPasien);
+                $_SESSION['pasien_nocm'] = $noCm;
+            }
+
+            // ============================================================
+            // Registrasi dan Antrian (sama untuk kedua kasus)
+            // ============================================================
+            $regNorec = generateNorec();
+            $prefixReg = 'REG' . date('ymd');
+            $stmtCountReg = $pdo->query("SELECT COUNT(*) AS count_reg FROM pasiendaftar_t WHERE noregistrasi LIKE '$prefixReg%'");
+            $countReg = ($stmtCountReg->fetch()['count_reg'] ?? 0) + 1;
+            $noRegistrasi = $prefixReg . str_pad($countReg, 4, '0', STR_PAD_LEFT);
+
+            $sqlReg = "INSERT INTO pasiendaftar_t (
+                norec, kdprofile, statusenabled, noregistrasi, nocmfk, tglregistrasi,
+                objectruanganlastfk, objectpegawaifk, objectkelompokpasienlastfk, objectkelasfk,
+                statuspasien, created_at
+            ) VALUES (
+                :norec, 1, true, :noregistrasi, :nocmfk, :tglregistrasi,
+                :ruangan, :dokter, 1, 6,
+                'Pasien Baru', NOW()
+            )";
+            $stmtReg = $pdo->prepare($sqlReg);
+            $stmtReg->execute([
+                ':norec' => $regNorec,
+                ':noregistrasi' => $noRegistrasi,
+                ':nocmfk' => $pasienId,
+                ':tglregistrasi' => $tglKunjungan . ' ' . date('H:i:s'),
+                ':ruangan' => $ruanganId,
+                ':dokter' => $dokterId
+            ]);
+
+            // Antrian
+            $apdNorec = generateNorec();
+            // Ambil prefix antrian
+            $stmtRu = $pdo->prepare("SELECT prefixnoantrian, namaruangan FROM ruangan_m WHERE id = :id");
+            $stmtRu->execute([':id' => $ruanganId]);
+            $ruanganInfo = $stmtRu->fetch();
+            $prefixAntrian = !empty($ruanganInfo['prefixnoantrian']) ? trim($ruanganInfo['prefixnoantrian']) : 'A';
+            $namaRuangan = $ruanganInfo['namaruangan'] ?? 'Poliklinik';
+
+            // Ambil nama dokter
+            $stmtDokter = $pdo->prepare("SELECT namalengkap FROM pegawai_m WHERE id = :id");
+            $stmtDokter->execute([':id' => $dokterId]);
+            $dokterInfo = $stmtDokter->fetch();
+            $namaDokter = $dokterInfo['namalengkap'] ?? '-';
+
+            $stmtCountApd = $pdo->prepare("SELECT COUNT(*) AS count_antrian FROM antrianpasiendiperiksa_t WHERE objectruanganfk = :ruangan AND DATE(tglregistrasi) = :tgl");
+            $stmtCountApd->execute([':ruangan' => $ruanganId, ':tgl' => $tglKunjungan]);
+            $noAntrian = ($stmtCountApd->fetch()['count_antrian'] ?? 0) + 1;
+
+            $sqlApd = "INSERT INTO antrianpasiendiperiksa_t (
+                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+                objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk, noantrian, prefixnoantrian,
+                tglregistrasi, statusantrian, created_at
+            ) VALUES (
+                :norec, 1, true, :noreg_fk, :noregistrasi,
+                :ruangan, :dokter, 6, 6, :noantrian, :prefix,
+                :tglregistrasi, '0', NOW()
+            )";
+            $stmtApd = $pdo->prepare($sqlApd);
+            $stmtApd->execute([
+                ':norec' => $apdNorec,
+                ':noreg_fk' => $regNorec,
+                ':noregistrasi' => $noRegistrasi,
+                ':ruangan' => $ruanganId,
+                ':dokter' => $dokterId,
+                ':noantrian' => $noAntrian,
+                ':prefix' => $prefixAntrian,
+                ':tglregistrasi' => $tglKunjungan . ' ' . date('H:i:s')
+            ]);
+
+            $pdo->commit();
+
+            // Response
+            $responseData = [
+                'noregistrasi' => $noRegistrasi,
+                'noantrian' => $prefixAntrian . '-' . str_pad($noAntrian, 3, '0', STR_PAD_LEFT),
+                'tgl_kunjungan' => $tglKunjungan,
+                'poliklinik' => $namaRuangan,
+                'dokter' => $namaDokter
+            ];
+
+            if (!$isLoggedIn) {
+                $responseData['nocm'] = $noCm;
+                $responseData['namapasien'] = $namaPasien;
+                $message = 'Pendaftaran pasien baru berhasil!';
+            } else {
+                $message = 'Pendaftaran kunjungan berhasil!';
+            }
+
+            respond([
+                'success' => true,
+                'message' => $message,
+                'data' => $responseData
+            ]);
+
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log("Error in daftar_online: " . $e->getMessage());
+            error_log("Trace: " . $e->getTraceAsString());
+            respond(['error' => 'Gagal mendaftar: ' . $e->getMessage()], 500);
+        }
+        break;
+
+    // ---------- SEARCH DESA / KELURAHAN ----------
+    case 'search_desa':
+        $query = trim($_GET['q'] ?? $_GET['namadesakelurahan'] ?? '');
+        if (strlen($query) < 2) {
+            respond(['success' => true, 'data' => []]);
+        }
+        $sql = "SELECT 
+                    dk.id as id_dk, 
+                    dk.namadesakelurahan, 
+                    dk.kodepos, 
+                    dk.objectkecamatanfk, 
+                    dk.objectkotakabupatenfk, 
+                    dk.objectpropinsifk, 
+                    kc.namakecamatan, 
+                    kk.namakotakabupaten, 
+                    prop.namapropinsi 
+                FROM desakelurahan_m dk 
+                JOIN kecamatan_m kc ON kc.id = dk.objectkecamatanfk 
+                JOIN kotakabupaten_m kk ON kk.id = dk.objectkotakabupatenfk 
+                JOIN propinsi_m prop ON prop.id = dk.objectpropinsifk 
+                WHERE dk.statusenabled = true 
+                  AND (dk.namadesakelurahan ILIKE :q OR kc.namakecamatan ILIKE :q) 
+                ORDER BY dk.namadesakelurahan 
+                LIMIT 20";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':q' => "%$query%"]);
+        $desaList = $stmt->fetchAll();
+        respond(['success' => true, 'data' => $desaList]);
+        break;
+
+    // ---------- CHECK NIK DUPLICATE / SEARCH PASIEN ----------
+    case 'search_nik':
+        $nik = trim($_GET['nik'] ?? $_GET['noidentitas'] ?? '');
+        if (empty($nik)) respond(['error' => 'NIK tidak boleh kosong'], 400);
+        if (!preg_match('/^\d{16}$/', $nik)) {
+            respond(['success' => true, 'exists' => false, 'message' => 'NIK harus 16 digit angka']);
+        }
+        $stmt = $pdo->prepare("SELECT id, nocm, namapasien, tgllahir, nohp FROM pasien_m WHERE noidentitas = :nik AND statusenabled = true LIMIT 1");
+        $stmt->execute([':nik' => $nik]);
+        $pasien = $stmt->fetch();
+        if ($pasien) {
+            respond(['success' => true, 'exists' => true, 'data' => $pasien, 'message' => 'NIK sudah terdaftar atas nama ' . $pasien['namapasien'] . ' (No RM: ' . $pasien['nocm'] . ')']);
+        } else {
+            respond(['success' => true, 'exists' => false, 'message' => 'NIK belum terdaftar']);
+        }
+        break;
+
+    // ---------- GET MASTER DATA ----------
+    case 'get_masters':
+        $agama = $pdo->query("SELECT id, agama FROM agama_m WHERE statusenabled = true ORDER BY agama")->fetchAll();
+        $kebangsaan = $pdo->query("SELECT id, name FROM kebangsaan_m WHERE statusenabled = true ORDER BY name")->fetchAll();
+        $negara = $pdo->query("SELECT id, namanegara AS nama FROM negara_m WHERE statusenabled = true ORDER BY namanegara")->fetchAll();
+        if (empty($negara)) {
+            $negara = [['id' => 0, 'nama' => 'Indonesia']];
+        }
+        $hubungan = $pdo->query("SELECT id, hubungankeluarga AS nama FROM hubungankeluarga_m WHERE statusenabled = true ORDER BY id")->fetchAll();
+        $pekerjaan = $pdo->query("SELECT id, pekerjaan AS nama FROM pekerjaan_m WHERE statusenabled = true ORDER BY pekerjaan")->fetchAll();
+        $statusPerkawinan = $pdo->query("SELECT id, statusperkawinan AS nama FROM statusperkawinan_m WHERE statusenabled = true ORDER BY id")->fetchAll();
+        $goldar = $pdo->query("SELECT id, golongandarah AS nama FROM golongandarah_m WHERE statusenabled = true ORDER BY golongandarah")->fetchAll();
+        $pendidikan = $pdo->query("SELECT id, pendidikan AS nama FROM pendidikan_m WHERE statusenabled = true ORDER BY id")->fetchAll();
+        $etnis = $pdo->query("SELECT id, suku AS nama FROM suku_m WHERE statusenabled = true ORDER BY suku")->fetchAll();
+        
+        $poliklinik = $pdo->query("SELECT id, namaruangan, prefixnoantrian FROM ruangan_m WHERE objectdepartemenfk = 18 AND statusenabled = true ORDER BY namaruangan")->fetchAll();
+        $dokter = $pdo->query("SELECT id, namalengkap FROM pegawai_m WHERE statusenabled = true AND (objectjenispegawaifk = 1 OR namalengkap ILIKE 'dr%') ORDER BY namalengkap")->fetchAll();
+        $kelompokPasien = $pdo->query("SELECT id, kelompokpasien FROM kelompokpasien_m WHERE statusenabled = true ORDER BY id")->fetchAll();
+
+        respond([
+            'success' => true,
+            'data' => [
+                'agama' => $agama,
+                'kebangsaan' => $kebangsaan,
+                'negara' => $negara,
+                'hubungan' => $hubungan,
+                'pekerjaan' => $pekerjaan,
+                'status_perkawinan' => $statusPerkawinan,
+                'goldar' => $goldar,
+                'pendidikan' => $pendidikan,
+                'etnis' => $etnis,
+                'poliklinik' => $poliklinik,
+                'dokter' => $dokter,
+                'kelompok_pasien' => $kelompokPasien,
+            ]
+        ]);
+        break;
+
+    // ---------- GET PROFILE ----------
+    case 'get_profile':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+        $stmt = $pdo->prepare("SELECT id, namapasien, nocm, tgllahir, objectjeniskelaminfk FROM pasien_m WHERE id = :id");
+        $stmt->execute([':id' => $pasien_id]);
+        $profile = $stmt->fetch();
+        if (!$profile) {
+            respond(['error' => 'Data pasien tidak ditemukan']);
+        }
+        $jk = $profile['objectjeniskelaminfk'];
+        $jenisKelamin = '-';
+        if ($jk) {
+            $stmtJk = $pdo->prepare("SELECT jeniskelamin FROM jeniskelamin_m WHERE id = :id");
+            $stmtJk->execute([':id' => $jk]);
+            $jkData = $stmtJk->fetch();
+            $jenisKelamin = $jkData['jeniskelamin'] ?? '-';
+        }
+        $umur = '-';
+        if (!empty($profile['tgllahir'])) {
+            $birth = new DateTime($profile['tgllahir']);
+            $now = new DateTime();
+            $diff = $now->diff($birth);
+            $umur = $diff->y . ' thn';
+            if ($diff->y == 0 && $diff->m > 0) $umur = $diff->m . ' bln';
+            if ($diff->y == 0 && $diff->m == 0) $umur = $diff->d . ' hr';
+        }
+        $profile['jenis_kelamin'] = $jenisKelamin;
+        $profile['umur'] = $umur;
+        unset($profile['objectjeniskelaminfk']);
+        respond(['success' => true, 'data' => $profile]);
+        break;
+
+    // ---------- GET ORDERS (Lab & Rad) ----------
+    case 'get_orders':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+
+        $sqlReg = "SELECT norec FROM pasiendaftar_t WHERE nocmfk = :pasien_id AND statusenabled = true";
+        $stmtReg = $pdo->prepare($sqlReg);
+        $stmtReg->execute([':pasien_id' => $pasien_id]);
+        $registrasi = $stmtReg->fetchAll();
+        $norecList = array_column($registrasi, 'norec');
+
+        $orders = [];
+        if (!empty($norecList)) {
+            $inPlaceholders = implode(',', array_fill(0, count($norecList), '?'));
+            $sqlOrder = "
+                SELECT 
+                    so.norec AS norec_so,
+                    so.noorder,
+                    so.tglorder,
+                    so.keteranganorder,
+                    so.statusorder,
+                    so.noregistrasi,
+                    so.norec_apd,
+                    ru.namaruangan AS ruangan_tujuan,
+                    ruasal.namaruangan AS ruangan_asal,
+                    pg_order.namalengkap AS dokter_order,
+                    pr.namaproduk,
+                    pr.id AS produk_id,
+                    COALESCE(NULLIF(TRIM(hl.satuan), ''), NULLIF(TRIM(ss.satuanstandar), ''), '') AS satuan,
+                    pp.norec AS norec_pp,
+                    hr.keterangan AS expertise,
+                    hr.norec AS norec_exper,
+                    pg_baca.namalengkap AS dokter_baca
+                FROM strukorder_t so
+                JOIN ruangan_m ru ON ru.id = so.objectruangantujuanfk
+                LEFT JOIN ruangan_m ruasal ON ruasal.id = so.objectruanganfk
+                LEFT JOIN pegawai_m pg_order ON pg_order.id = so.objectpegawaiorderfk
+                LEFT JOIN pelayananpasien_t pp ON pp.strukorderfk = so.norec AND pp.statusenabled = true
+                LEFT JOIN produk_m pr ON pr.id = pp.produkfk
+                LEFT JOIN satuanstandar_m ss ON ss.id = pr.objectsatuanstandarfk
+                LEFT JOIN hasillaboratorium_t hl ON hl.norecpelayanan = pp.norec AND hl.statusenabled = true
+                LEFT JOIN hasilradiologi_t hr ON hr.pelayananpasienfk = pp.norec AND hr.statusenabled = true
+                LEFT JOIN pegawai_m pg_baca ON pg_baca.id = hr.pegawaifk
+                WHERE so.noregistrasifk IN ($inPlaceholders)
+                  AND so.keteranganorder IN ('Order Laboratorium', 'Order Radiologi')
+                  AND so.statusenabled = true
+                ORDER BY so.tglorder DESC, so.noorder
+            ";
+            $stmtOrder = $pdo->prepare($sqlOrder);
+            $stmtOrder->execute($norecList);
+            $rawOrders = $stmtOrder->fetchAll();
+
+            foreach ($rawOrders as $row) {
+                $key = $row['norec_so'];
+                if (!isset($orders[$key])) {
+                    $orders[$key] = [
+                        'norec_so' => $row['norec_so'],
+                        'noorder' => $row['noorder'],
+                        'tglorder' => $row['tglorder'],
+                        'keteranganorder' => $row['keteranganorder'],
+                        'statusorder' => $row['statusorder'],
+                        'noregistrasi' => $row['noregistrasi'],
+                        'norec_apd' => $row['norec_apd'] ?? '',
+                        'ruangan_tujuan' => $row['ruangan_tujuan'],
+                        'ruangan_asal' => $row['ruangan_asal'] ?? '-',
+                        'dokter_order' => $row['dokter_order'] ?? '-',
+                        'dokter_baca' => $row['dokter_baca'] ?? '-',
+                        'expertise' => $row['expertise'],
+                        'norec_exper' => $row['norec_exper'],
+                        'produk' => [],
+                    ];
+                }
+                if (!empty($row['namaproduk'])) {
+                    $exists = false;
+                    foreach ($orders[$key]['produk'] as $p) {
+                        if ($p['produk_id'] == $row['produk_id']) {
+                            $exists = true;
+                            break;
+                        }
+                    }
+                    if (!$exists) {
+                        $orders[$key]['produk'][] = [
+                            'namaproduk' => $row['namaproduk'],
+                            'produk_id' => $row['produk_id'],
+                            'satuan' => $row['satuan'] ?? '',
+                            'norec_pp' => $row['norec_pp'],
+                            'norec_exper' => $row['norec_exper'],
+                        ];
+                    }
+                }
+            }
+        }
+
+        $ordersLab = array_values(array_filter($orders, function($o) { 
+            return $o['keteranganorder'] == 'Order Laboratorium' && in_array($o['statusorder'], [1,2]); 
+        }));
+        $ordersRad = array_values(array_filter($orders, function($o) { 
+            return $o['keteranganorder'] == 'Order Radiologi' && in_array($o['statusorder'], [1,2]); 
+        }));
+
+        respond(['success' => true, 'lab' => $ordersLab, 'rad' => $ordersRad]);
+        break;
+
+    // ---------- GET RIWAYAT KUNJUNGAN ----------
+    case 'get_riwayat':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+        $sql = "SELECT 
+                    pd.norec, 
+                    pd.noregistrasi, 
+                    pd.tglregistrasi, 
+                    pd.tglpulang,
+                    ru.namaruangan,
+                    pg.namalengkap AS namadokter,
+                    CASE WHEN EXISTS (
+                        SELECT 1 FROM antrianpasiendiperiksa_t apd
+                        WHERE apd.noregistrasi = pd.noregistrasi
+                          AND apd.statusenabled = true
+                          AND apd.objectkamarfk IS NOT NULL
+                    ) THEN 'Rawat Inap' ELSE 'Rawat Jalan' END AS jenis_rawat
+                FROM pasiendaftar_t pd
+                LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
+                LEFT JOIN pegawai_m pg ON pg.id = pd.objectpegawaifk
+                WHERE pd.nocmfk = :pasien_id AND pd.statusenabled = true 
+                ORDER BY pd.tglregistrasi DESC";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([':pasien_id' => $pasien_id]);
+        $riwayat = $stmt->fetchAll();
+        respond(['success' => true, 'data' => $riwayat]);
+        break;
+
+    // ============================================================
+    // CHECKIN CASE - DENGAN DEBUG LENGKAP
+    // ============================================================
+   case 'checkin':
+    error_log("=== CHECKIN REQUEST START ===");
+    error_log("Request Method: " . $_SERVER['REQUEST_METHOD']);
+    error_log("Input raw: " . file_get_contents('php://input'));
+    error_log("Session: " . json_encode($_SESSION));
+    
+    if (!isLoggedIn()) {
+        error_log("CHECKIN ERROR: User not logged in");
+        respond([
+            'error' => 'Unauthorized - Silakan login terlebih dahulu',
+            'debug' => [
+                'session_exists' => isset($_SESSION),
+                'session_id' => session_id(),
+                'pasien_id_set' => isset($_SESSION['pasien_id'])
+            ]
+        ], 401);
+    }
+    
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        error_log("CHECKIN ERROR: Method not allowed - " . $_SERVER['REQUEST_METHOD']);
+        respond(['error' => 'Method not allowed, gunakan POST'], 405);
+    }
+    
+    $input = json_decode(file_get_contents('php://input'), true);
+    error_log("CHECKIN Input parsed: " . json_encode($input));
+    
+    if ($input === null && json_last_error() !== JSON_ERROR_NONE) {
+        error_log("CHECKIN ERROR: JSON parse error - " . json_last_error_msg());
+        respond([
+            'error' => 'Invalid JSON input',
+            'debug' => [
+                'json_error' => json_last_error_msg(),
+                'raw_input' => file_get_contents('php://input')
+            ]
+        ], 400);
+    }
+    
+    $noregistrasi = trim($input['noregistrasi'] ?? '');
+    $barcode = trim($input['barcode'] ?? '');
+    
+    error_log("CHECKIN: noregistrasi='" . $noregistrasi . "', barcode='" . $barcode . "'");
+    
+    if (empty($noregistrasi)) {
+        error_log("CHECKIN ERROR: noregistrasi empty");
+        respond(['error' => 'noregistrasi required'], 400);
+    }
+    if (empty($barcode)) {
+        error_log("CHECKIN ERROR: barcode empty");
+        respond(['error' => 'Barcode tidak valid'], 400);
+    }
+    
+    $pasien_id = $_SESSION['pasien_id'];
+    error_log("CHECKIN: Pasien ID: " . $pasien_id);
+    
+    try {
+        $pdo->beginTransaction();
+        error_log("CHECKIN: Transaction started");
+        
+        // Cek registrasi pasien
+        $stmt = $pdo->prepare("
+            SELECT pd.norec, pd.noregistrasi, pd.nocmfk, pd.objectruanganlastfk, 
+                   pd.tglregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
+                   pd.objectkelasfk, pd.objectpegawaifk,
+                   ap.norec as norec_apd, ap.statusantrian, ap.objectpegawaifk as ap_dokter
+            FROM pasiendaftar_t pd
+            LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+            WHERE pd.noregistrasi = :noregistrasi AND pd.nocmfk = :pasien_id
+            LIMIT 1
+        ");
+        $stmt->execute([
+            ':noregistrasi' => $noregistrasi, 
+            ':pasien_id' => $pasien_id
+        ]);
+        $reg = $stmt->fetch();
+        
+        error_log("CHECKIN: Registrasi query result: " . json_encode($reg));
+        
+        if (!$reg) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Registrasi not found");
+            respond([
+                'error' => 'Data registrasi tidak ditemukan atau bukan milik Anda',
+                'debug' => [
+                    'noregistrasi' => $noregistrasi,
+                    'pasien_id' => $pasien_id
+                ]
+            ]);
+        }
+        
+        if (!$reg['statusenabled']) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Registrasi not enabled");
+            respond(['error' => 'Registrasi tidak aktif atau sudah Selesai']);
+        }
+        
+        if (!empty($reg['tglpulang'])) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Sudah pulang pada " . $reg['tglpulang']);
+            respond(['error' => 'Kunjungan sudah selesai pada ' . $reg['tglpulang']]);
+        }
+        
+        if ($reg['statusantrian'] == 1) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Sudah dalam proses pemeriksaan");
+            respond(['error' => 'Pasien sudah dalam proses pemeriksaan']);
+        }
+        
+        if ($reg['statusantrian'] == 2) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Sudah selesai pemeriksaan");
+            respond(['error' => 'Kunjungan sudah selesai pemeriksaan']);
+        }
+        
+        // Validasi barcode
+        error_log("CHECKIN: Validating barcode...");
+        if (!validateCheckinBarcode($barcode)) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Barcode invalid");
+            respond([
+                'error' => 'Barcode tidak valid. Silakan scan QR Code dari halaman barcode.php loket admisi.',
+                'debug' => [
+                    'barcode' => $barcode,
+                    'expected_pattern' => 'CHECKIN-RSUD-MALANGBONG-YYYYMMDD'
+                ]
+            ]);
+        }
+        
+        if ($reg['ischeckin']) {
+            $pdo->rollBack();
+            error_log("CHECKIN ERROR: Sudah check-in sebelumnya");
+            respond(['error' => 'Check-in sudah dilakukan sebelumnya']);
+        }
+        
+        // ==================== INSERT STRUK TAGIHAN ====================
+        error_log("CHECKIN: Generating struk...");
+        $noStruk = generateStrukNumber($pdo, 1);
+        $strukNorec = generateUuid();
+        error_log("CHECKIN: noStruk=$noStruk, strukNorec=$strukNorec");
+        
+        $sqlStruk = "INSERT INTO strukpelayanan_t (
+            norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+            tglstruk, totalharusdibayar, nostruk, objectkelompoktransaksifk, created_at
+        ) VALUES (
+            :norec, 1, true, :norec_reg, :noregistrasi,
+            NOW(), :total, :nostruk, 2, NOW()
+        )";
+        
+        $stmtStruk = $pdo->prepare($sqlStruk);
+        $stmtStruk->execute([
+            ':norec' => $strukNorec,
+            ':norec_reg' => $reg['norec'],
+            ':noregistrasi' => $noregistrasi,
+            ':total' => 75000,
+            ':nostruk' => $noStruk
+        ]);
+        error_log("CHECKIN: Struk inserted successfully");
+        
+        // ==================== AMBIL DPJP ====================
+        $dpjp = $reg['ap_dokter'] ?? $reg['objectpegawaifk'] ?? null;
+        error_log("CHECKIN: DPJP = " . ($dpjp ?: 'NULL'));
+        
+        // ==================== INSERT PELAYANAN ====================
+        $produkId = 6164; // ID produk "BIAYA REGISTRASI"
+        $hargaSatuan = 75000;
+        $kelasFk = $reg['objectkelasfk'] ?? 6;
+        
+        $pelayananNorec = generateUuid();
+        
+        // INSERT hanya dengan kolom yang ADA di tabel pelayananpasien_t
+        // Berdasarkan struktur tabel, kolom yang ADA: 
+        // norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+        // tglregistrasi, tglpelayanan, produkfk, jumlah, hargasatuan,
+        // hargajual, harganetto, kelasfk, kdkelompoktransaksi,
+        // keteranganlain, stock, jasa, dpjp, created_at, updated_at
+        
+        // Kolom isobat, israd, islab, isparamedis TIDAK ADA di tabel!
+        $sqlPelayanan = "
+            INSERT INTO pelayananpasien_t (
+                norec, 
+                kdprofile, 
+                statusenabled, 
+                noregistrasifk, 
+                noregistrasi,
+                tglregistrasi,
+                tglpelayanan,
+                produkfk, 
+                jumlah, 
+                hargasatuan, 
+                hargajual,
+                harganetto, 
+                kelasfk, 
+                kdkelompoktransaksi, 
+                keteranganlain,
+                stock,
+                jasa,
+                dpjp,
+                created_at,
+                updated_at
+            ) VALUES (
+                :norec, 
+                1, 
+                true, 
+                :norec_reg, 
+                :noregistrasi,
+                :tglregistrasi,
+                :tglregistrasi,
+                :produkfk, 
+                1, 
+                :harga, 
+                :harga,
+                :harga, 
+                :kelas, 
+                :kelompok, 
+                'BIAYA REGISTRASI CHECKIN',
+                0,
+                0,
+                :dpjp,
+                NOW(),
+                NOW()
+            )
+        ";
+        
+        try {
+            $stmtPel = $pdo->prepare($sqlPelayanan);
+            $stmtPel->execute([
+                ':norec' => $pelayananNorec,
+                ':norec_reg' => $reg['norec'],
+                ':noregistrasi' => $noregistrasi,
+                ':tglregistrasi' => $reg['tglregistrasi'],
+                ':produkfk' => $produkId,
+                ':harga' => $hargaSatuan,
+                ':kelas' => $kelasFk,
+                ':kelompok' => '2',
+                ':dpjp' => $dpjp
+            ]);
+            error_log("CHECKIN: Pelayanan inserted successfully: " . $pelayananNorec);
+        } catch (PDOException $e) {
+            error_log("CHECKIN ERROR: Insert pelayanan failed - " . $e->getMessage());
+            error_log("CHECKIN ERROR SQL: " . $sqlPelayanan);
+            error_log("CHECKIN ERROR Params: " . json_encode([
+                ':norec' => $pelayananNorec,
+                ':norec_reg' => $reg['norec'],
+                ':noregistrasi' => $noregistrasi,
+                ':tglregistrasi' => $reg['tglregistrasi'],
+                ':produkfk' => $produkId,
+                ':harga' => $hargaSatuan,
+                ':kelas' => $kelasFk,
+                ':kelompok' => '2',
+                ':dpjp' => $dpjp
+            ]));
+            throw $e;
+        }
+        
+        // ==================== UPDATE FLAG CHECK-IN ====================
+        $stmtCheckinFlag = $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :norec_reg");
+        $stmtCheckinFlag->execute([':norec_reg' => $reg['norec']]);
+        error_log("CHECKIN: Check-in flag updated in pasiendaftar_t");
+        
+        // Update status antrian
+        if ($reg['norec_apd']) {
+            $stmtApdUpdate = $pdo->prepare("
+                UPDATE antrianpasiendiperiksa_t 
+                SET statusantrian = 1 
+                WHERE norec = :norec_apd
+            ");
+            $stmtApdUpdate->execute([':norec_apd' => $reg['norec_apd']]);
+            error_log("CHECKIN: Antrian status updated to 1");
+        } else {
+            error_log("CHECKIN: Warning - No antrian found for this registration");
+        }
+        
+        $pdo->commit();
+        error_log("CHECKIN: Transaction committed successfully");
+        
+        respond([
+            'success' => true,
+            'message' => 'Check-in berhasil! Tagihan registrasi 75.000 telah ditambahkan.',
+            'data' => [
+                'noregistrasi' => $noregistrasi,
+                'tagihan_checkin' => 75000,
+                'tgl_checkin' => date('Y-m-d H:i:s'),
+                'nostruk' => $noStruk,
+                'pelayanan_norec' => $pelayananNorec,
+                'dpjp' => $dpjp
+            ]
+        ]);
+        
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log("CHECKIN PDO ERROR: " . $e->getMessage());
+        error_log("CHECKIN PDO ERROR CODE: " . $e->getCode());
+        error_log("CHECKIN PDO ERROR TRACE: " . $e->getTraceAsString());
+        
+        respond([
+            'error' => 'Database error saat check-in: ' . $e->getMessage(),
+            'debug' => [
+                'error_code' => $e->getCode(),
+                'sql_state' => $e->errorInfo[0] ?? null,
+                'driver_code' => $e->errorInfo[1] ?? null,
+                'driver_message' => $e->errorInfo[2] ?? null
+            ]
+        ], 500);
+        
+    } catch (Exception $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log("CHECKIN GENERAL ERROR: " . $e->getMessage());
+        error_log("CHECKIN GENERAL ERROR TRACE: " . $e->getTraceAsString());
+        respond([
+            'error' => 'Gagal check-in: ' . $e->getMessage(),
+            'debug' => [
+                'error_type' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]
+        ], 500);
+    }
+    break;
+    case 'get_ticket_detail':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $noregistrasi = trim($_GET['noregistrasi'] ?? '');
+        if (empty($noregistrasi)) {
+            respond(['error' => 'noregistrasi required']);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+        $stmt = $pdo->prepare("
+            SELECT 
+                pd.noregistrasi,
+                pd.tglregistrasi,
+                r.namaruangan AS poliklinik,
+                p.namalengkap AS dokter,
+                ap.noantrian,
+                ap.prefixnoantrian,
+                CONCAT(ap.prefixnoantrian, '-', LPAD(ap.noantrian::text, 3, '0')) AS noantrian_full
+            FROM pasiendaftar_t pd
+            LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+            LEFT JOIN ruangan_m r ON r.id = pd.objectruanganlastfk
+            LEFT JOIN pegawai_m p ON p.id = pd.objectpegawaifk
+            WHERE pd.noregistrasi = :noregistrasi
+              AND pd.nocmfk = :pasien_id
+              AND pd.statusenabled = true
+            LIMIT 1
+        ");
+        $stmt->execute([':noregistrasi' => $noregistrasi, ':pasien_id' => $pasien_id]);
+        $data = $stmt->fetch();
+        if (!$data) {
+            respond(['error' => 'Data tidak ditemukan']);
+        }
+        respond(['success' => true, 'data' => $data]);
+        break;
+
+    // ---------- BATAL RESERVASI KUNJUNGAN ----------
+    case 'cancel_reservation':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            respond(['error' => 'Method not allowed'], 405);
+        }
+        $input = json_decode(file_get_contents('php://input'), true);
+        $noregistrasi = trim($input['noregistrasi'] ?? '');
+        if (empty($noregistrasi)) {
+            respond(['error' => 'noregistrasi required']);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+        try {
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare("
+                SELECT tglregistrasi, statusenabled, objectpegawaifk, objectruanganlastfk 
+                FROM pasiendaftar_t 
+                WHERE noregistrasi = :noregistrasi AND nocmfk = :pasien_id
+            ");
+            $stmt->execute([':noregistrasi' => $noregistrasi, ':pasien_id' => $pasien_id]);
+            $reg = $stmt->fetch();
+            if (!$reg) {
+                $pdo->rollBack();
+                respond(['error' => 'Data tidak ditemukan']);
+            }
+            if (!$reg['statusenabled']) {
+                $pdo->rollBack();
+                respond(['error' => 'Reservasi sudah dibatalkan atau tidak aktif']);
+            }
+            $stmtApd = $pdo->prepare("
+                UPDATE antrianpasiendiperiksa_t 
+                SET statusantrian = '3' 
+                WHERE noregistrasi = :noregistrasi
+            ");
+            $stmtApd->execute([':noregistrasi' => $noregistrasi]);
+            $stmtReg = $pdo->prepare("
+                UPDATE pasiendaftar_t 
+                SET statusenabled = false,
+                    tglpulang = NOW()
+                WHERE noregistrasi = :noregistrasi
+            ");
+            $stmtReg->execute([':noregistrasi' => $noregistrasi]);
+            $dokterId = $reg['objectpegawaifk'];
+            $ruanganId = $reg['objectruanganlastfk'];
+            $tglRegistrasi = date('Y-m-d', strtotime($reg['tglregistrasi']));
+            if ($dokterId && $ruanganId && $tglRegistrasi) {
+                $stmtQuota = $pdo->prepare("
+                    UPDATE jadwaldokter_m 
+                    SET quota = quota + 1 
+                    WHERE tanggal = :tanggal 
+                      AND objectpegawaifk = :dokter 
+                      AND objectruanganfk = :ruangan 
+                      AND statusenabled = true 
+                      AND kdprofile = 1
+                ");
+                $stmtQuota->execute([
+                    ':tanggal' => $tglRegistrasi,
+                    ':dokter' => $dokterId,
+                    ':ruangan' => $ruanganId
+                ]);
+            }
+            $pdo->commit();
+            respond(['success' => true, 'message' => 'Reservasi berhasil dibatalkan']);
+        } catch (Exception $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            respond(['error' => 'Gagal membatalkan: ' . $e->getMessage()], 500);
+        }
+        break;
+
+    // ---------- CEK JADWAL DOKTER ----------
+    case 'cek_jadwal_dokter':
+        $tanggal = trim($_GET['tanggal'] ?? '');
+        $ruangan_id = trim($_GET['ruangan_id'] ?? '');
+        $dokter_id = trim($_GET['dokter_id'] ?? '');
+
+        if (empty($tanggal)) {
+            respond(['exists' => false, 'message' => 'Tanggal wajib diisi']);
+        }
+        if (empty($ruangan_id)) {
+            respond(['exists' => false, 'message' => 'Ruangan wajib dipilih']);
+        }
+        if (empty($dokter_id)) {
+            respond(['exists' => false, 'message' => 'Dokter wajib dipilih']);
+        }
+
+        $stmt = $pdo->prepare("SELECT id, jammulai, jamakhir, hari, quota FROM jadwaldokter_m 
+                               WHERE tanggal = :tanggal 
+                               AND objectruanganfk = :ruangan 
+                               AND objectpegawaifk = :dokter 
+                               AND statusenabled = true 
+                               AND kdprofile = 1 
+                               LIMIT 1");
+        $stmt->execute([
+            ':tanggal' => $tanggal,
+            ':ruangan' => $ruangan_id,
+            ':dokter' => $dokter_id
+        ]);
+        $jadwal = $stmt->fetch();
+
+        if ($jadwal) {
+            respond([
+                'exists' => true,
+                'message' => 'Jadwal tersedia: ' . $jadwal['jammulai'] . ' - ' . $jadwal['jamakhir'] . ' (' . $jadwal['hari'] . ')',
+                'data' => $jadwal
+            ]);
+        } else {
+            respond([
+                'exists' => false,
+                'message' => 'Tidak ada jadwal praktik dokter untuk tanggal, ruangan, dan dokter yang dipilih.'
+            ]);
+        }
+        break;
+
+    // ---------- CEK BOOKING AKTIF ----------
+    case 'check_active_booking':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+        
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) AS total 
+            FROM pasiendaftar_t 
+            WHERE nocmfk = :pasien_id 
+              AND DATE(tglregistrasi) = CURRENT_DATE 
+              AND statusenabled = true 
+              AND tglpulang IS NULL
+        ");
+        $stmt->execute([':pasien_id' => $pasien_id]);
+        $result = $stmt->fetch();
+        
+        $hasActive = ($result['total'] ?? 0) > 0;
+        
+        respond([
+            'success' => true,
+            'has_active_booking' => $hasActive,
+            'message' => $hasActive
+                ? 'Anda masih memiliki kunjungan aktif hari ini yang belum selesai (belum pulang). Anda tidak dapat membuat reservasi baru ke poliklinik mana pun sampai kunjungan selesai.'
+                : 'Tidak ada reservasi aktif.'
+        ]);
+        break;
+
+    // ---------- GET DOKTER BY JADWAL ----------
+    case 'get_dokter_by_jadwal':
+        $tanggal = trim($_GET['tanggal'] ?? '');
+        $ruangan_id = trim($_GET['ruangan_id'] ?? '');
+
+        if (empty($tanggal) || empty($ruangan_id)) {
+            respond(['success' => false, 'message' => 'Tanggal dan ruangan wajib diisi', 'data' => []]);
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT
+                jd.objectpegawaifk AS id,
+                pg.namalengkap,
+                jd.jammulai,
+                jd.jamakhir,
+                jd.hari,
+                jd.quota,
+                (
+                    SELECT COUNT(*) 
+                    FROM antrianpasiendiperiksa_t apd 
+                    WHERE apd.objectpegawaifk = jd.objectpegawaifk 
+                      AND apd.objectruanganfk = jd.objectruanganfk
+                      AND DATE(apd.tglregistrasi) = :tanggal2
+                      AND apd.statusenabled = true
+                ) AS terpakai
+            FROM jadwaldokter_m jd
+            JOIN pegawai_m pg ON pg.id = jd.objectpegawaifk
+            WHERE jd.tanggal = :tanggal
+              AND jd.objectruanganfk = :ruangan
+              AND jd.statusenabled = true
+              AND pg.statusenabled = true
+              AND jd.kdprofile = 1
+            ORDER BY pg.namalengkap
+        ");
+        $stmt->execute([
+            ':tanggal'  => $tanggal,
+            ':tanggal2' => $tanggal,
+            ':ruangan'  => $ruangan_id,
+        ]);
+        $dokterList = $stmt->fetchAll();
+
+        foreach ($dokterList as &$d) {
+            $d['sisa_quota'] = max(0, (int)$d['quota'] - (int)$d['terpakai']);
+            $d['info'] = $d['jammulai'] . ' - ' . $d['jamakhir'] . 
+                         ' | Sisa Kuota: ' . $d['sisa_quota'] . '/' . $d['quota'];
+        }
+        unset($d);
+
+        respond(['success' => true, 'data' => $dokterList]);
+        break;
+
+    // ---------- GET OBAT (Riwayat Resep / Farmasi) ----------
+    case 'get_obat':
+        if (!isLoggedIn()) {
+            respond(['error' => 'Unauthorized'], 401);
+        }
+        $pasien_id = $_SESSION['pasien_id'];
+
+        $sqlReg = "SELECT norec, noregistrasi, tglregistrasi FROM pasiendaftar_t WHERE nocmfk = :pasien_id AND statusenabled = true";
+        $stmtReg = $pdo->prepare($sqlReg);
+        $stmtReg->execute([':pasien_id' => $pasien_id]);
+        $registrasi = $stmtReg->fetchAll();
+        $norecList = array_column($registrasi, 'norec');
+
+        $obatList = [];
+        if (!empty($norecList)) {
+            $inPlaceholders = implode(',', array_fill(0, count($norecList), '?'));
+            $sqlObat = "
+                SELECT 
+                    so.norec AS norec_so,
+                    so.noorder,
+                    so.tglorder,
+                    so.noregistrasi,
+                    so.statusorder,
+                    pr.namaproduk,
+                    pr.id AS produk_id,
+                    op.qtyproduk AS qty,
+                    op.hargasatuan,
+                    djp.reportdisplay AS jenis_obat
+                FROM strukorder_t so
+                JOIN orderpelayanan_t op ON op.strukorderfk = so.norec AND op.statusenabled = true
+                JOIN produk_m pr ON pr.id = op.objectprodukfk
+                LEFT JOIN detailjenisproduk_m djp ON djp.id = pr.objectdetailjenisprodukfk
+                WHERE so.noregistrasifk IN ($inPlaceholders)
+                  AND so.keteranganorder = 'Order Farmasi'
+                  AND so.statusenabled = true
+                ORDER BY so.tglorder DESC, so.noorder
+            ";
+            $stmtObat = $pdo->prepare($sqlObat);
+            $stmtObat->execute($norecList);
+            $rawObat = $stmtObat->fetchAll();
+
+            foreach ($rawObat as $row) {
+                $key = $row['norec_so'];
+                if (!isset($obatList[$key])) {
+                    $obatList[$key] = [
+                        'norec_so' => $row['norec_so'],
+                        'noorder' => $row['noorder'],
+                        'tglorder' => $row['tglorder'],
+                        'noregistrasi' => $row['noregistrasi'],
+                        'statusorder' => $row['statusorder'],
+                        'produk' => [],
+                    ];
+                }
+                if (!empty($row['namaproduk'])) {
+                    $exists = false;
+                    foreach ($obatList[$key]['produk'] as $p) {
+                        if ($p['produk_id'] == $row['produk_id']) {
+                            $exists = true;
+                            break;
+                        }
+                    }
+                    if (!$exists) {
+                        $obatList[$key]['produk'][] = [
+                            'namaproduk' => $row['namaproduk'],
+                            'produk_id' => $row['produk_id'],
+                            'qty' => $row['qty'] ?? 1,
+                            'jenis_obat' => $row['jenis_obat'] ?? 'Obat',
+                        ];
+                    }
+                }
+            }
+        }
+
+        respond(['success' => true, 'data' => array_values($obatList)]);
+        break;
+
+    // ---------- GET JADWAL DOKTER (Public) ----------
+    case 'get_jadwal_dokter':
+        $tanggal     = trim($_GET['tanggal'] ?? date('Y-m-d'));
+        $ruangan_id  = trim($_GET['ruangan_id'] ?? '');
+        $mode        = trim($_GET['mode'] ?? 'hari');
+
+        if ($mode === 'minggu') {
+            $tanggalAkhir = date('Y-m-d', strtotime($tanggal . ' +6 days'));
+            $sql = "
+                SELECT
+                    jd.id,
+                    jd.tanggal,
+                    jd.jammulai,
+                    jd.jamakhir,
+                    jd.hari,
+                    jd.quota,
+                    pg.id AS dokter_id,
+                    pg.namalengkap AS namadokter,
+                    ru.id AS ruangan_id,
+                    ru.namaruangan,
+                    ru.prefixnoantrian,
+                    (
+                        SELECT COUNT(*)
+                        FROM antrianpasiendiperiksa_t apd
+                        WHERE apd.objectpegawaifk = jd.objectpegawaifk
+                          AND apd.objectruanganfk = jd.objectruanganfk
+                          AND DATE(apd.tglregistrasi) = jd.tanggal
+                          AND apd.statusenabled = true
+                    ) AS terpakai
+                FROM jadwaldokter_m jd
+                JOIN pegawai_m pg ON pg.id = jd.objectpegawaifk
+                JOIN ruangan_m ru ON ru.id = jd.objectruanganfk
+                WHERE jd.tanggal >= :tanggal
+                  AND jd.tanggal <= :tanggal_akhir
+                  AND jd.tanggal >= CURRENT_DATE
+                  AND jd.statusenabled = true
+                  AND pg.statusenabled = true
+                  AND jd.kdprofile = 1
+            ";
+            $params = [':tanggal' => $tanggal, ':tanggal_akhir' => $tanggalAkhir];
+            if (!empty($ruangan_id)) {
+                $sql .= " AND jd.objectruanganfk = :ruangan";
+                $params[':ruangan'] = $ruangan_id;
+            }
+            $sql .= " ORDER BY jd.tanggal, ru.namaruangan, jd.jammulai";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        } else {
+            $sql = "
+                SELECT
+                    jd.id,
+                    jd.tanggal,
+                    jd.jammulai,
+                    jd.jamakhir,
+                    jd.hari,
+                    jd.quota,
+                    pg.id AS dokter_id,
+                    pg.namalengkap AS namadokter,
+                    ru.id AS ruangan_id,
+                    ru.namaruangan,
+                    ru.prefixnoantrian,
+                    (
+                        SELECT COUNT(*)
+                        FROM antrianpasiendiperiksa_t apd
+                        WHERE apd.objectpegawaifk = jd.objectpegawaifk
+                          AND apd.objectruanganfk = jd.objectruanganfk
+                          AND DATE(apd.tglregistrasi) = :tanggal2
+                          AND apd.statusenabled = true
+                    ) AS terpakai
+                FROM jadwaldokter_m jd
+                JOIN pegawai_m pg ON pg.id = jd.objectpegawaifk
+                JOIN ruangan_m ru ON ru.id = jd.objectruanganfk
+                WHERE jd.tanggal = :tanggal
+                  AND jd.tanggal >= CURRENT_DATE
+                  AND jd.statusenabled = true
+                  AND pg.statusenabled = true
+                  AND jd.kdprofile = 1
+            ";
+            $params = [':tanggal' => $tanggal, ':tanggal2' => $tanggal];
+            if (!empty($ruangan_id)) {
+                $sql .= " AND jd.objectruanganfk = :ruangan";
+                $params[':ruangan'] = $ruangan_id;
+            }
+            $sql .= " ORDER BY ru.namaruangan, jd.jammulai, pg.namalengkap";
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+        }
+
+        $jadwalList = $stmt->fetchAll();
+
+        foreach ($jadwalList as &$j) {
+            $j['sisa_quota'] = max(0, (int)$j['quota'] - (int)$j['terpakai']);
+            $j['persen_terpakai'] = $j['quota'] > 0 ? min(100, round(((int)$j['terpakai'] / (int)$j['quota']) * 100)) : 0;
+            $j['status'] = $j['sisa_quota'] > 0 ? 'Tersedia' : 'Penuh';
+        }
+        unset($j);
+
+        if ($mode === 'minggu') {
+            $grouped = [];
+            foreach ($jadwalList as $j) {
+                $tgl = $j['tanggal'];
+                if (!isset($grouped[$tgl])) {
+                    $grouped[$tgl] = [
+                        'tanggal' => $tgl,
+                        'hari'    => $j['hari'],
+                        'jadwal'  => [],
+                    ];
+                }
+                $grouped[$tgl]['jadwal'][] = $j;
+            }
+            respond(['success' => true, 'data' => array_values($grouped)]);
+        } else {
+            respond(['success' => true, 'data' => $jadwalList]);
+        }
+        break;
+
+    // ---------- GET POLIKLINIK LIST ----------
+    case 'get_poliklinik_list':
+        $poliklinik = $pdo->query("SELECT id, namaruangan, prefixnoantrian FROM ruangan_m WHERE objectdepartemenfk = 18 AND statusenabled = true ORDER BY namaruangan")->fetchAll();
+        respond(['success' => true, 'data' => $poliklinik]);
+        break;
+
+    // ---------- DEBUG ENDPOINT ----------
+    case 'debug':
+        respond([
+            'success' => true,
+            'session' => $_SESSION,
+            'session_id' => session_id(),
+            'is_logged_in' => isLoggedIn(),
+            'server' => [
+                'method' => $_SERVER['REQUEST_METHOD'],
+                'https' => isset($_SERVER['HTTPS']) ? $_SERVER['HTTPS'] : 'off',
+                'host' => $_SERVER['HTTP_HOST'] ?? 'unknown',
+                'origin' => $_SERVER['HTTP_ORIGIN'] ?? 'none'
+            ],
+            'barcode_test' => [
+                'today' => 'CHECKIN-RSUD-MALANGBONG-' . date('Ymd'),
+                'yesterday' => 'CHECKIN-RSUD-MALANGBONG-' . date('Ymd', strtotime('-1 day')),
+                'validate_today' => validateCheckinBarcode('CHECKIN-RSUD-MALANGBONG-' . date('Ymd')),
+                'validate_yesterday' => validateCheckinBarcode('CHECKIN-RSUD-MALANGBONG-' . date('Ymd', strtotime('-1 day'))),
+            ]
+        ]);
+        break;
+
+    // ---------- DEFAULT ----------
+    default:
+        error_log("Unknown action: " . $action);
+        respond(['error' => 'Aksi tidak valid: ' . $action], 400);
+}
+?>

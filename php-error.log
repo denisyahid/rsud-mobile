@@ -1,0 +1,11 @@
+[20-Aug-2026 11:20:17 Asia/Jakarta] PHP Warning:  Undefined variable $namaAyah in C:\xampp\htdocs\rsud_mobile.php on line 368
+[20-Aug-2026 11:20:17 Asia/Jakarta] PHP Deprecated:  strtoupper(): Passing null to parameter #1 ($string) of type string is deprecated in C:\xampp\htdocs\rsud_mobile.php on line 368
+[20-Aug-2026 11:20:17 Asia/Jakarta] PHP Warning:  Undefined variable $namaSuamiIstri in C:\xampp\htdocs\rsud_mobile.php on line 369
+[20-Aug-2026 11:20:17 Asia/Jakarta] PHP Deprecated:  strtoupper(): Passing null to parameter #1 ($string) of type string is deprecated in C:\xampp\htdocs\rsud_mobile.php on line 369
+[20-Aug-2026 11:26:11 Asia/Jakarta] PHP Warning:  Undefined variable $namaAyah in C:\xampp\htdocs\rsud_mobile.php on line 368
+[20-Aug-2026 11:26:11 Asia/Jakarta] PHP Deprecated:  strtoupper(): Passing null to parameter #1 ($string) of type string is deprecated in C:\xampp\htdocs\rsud_mobile.php on line 368
+[20-Aug-2026 11:26:11 Asia/Jakarta] PHP Warning:  Undefined variable $namaSuamiIstri in C:\xampp\htdocs\rsud_mobile.php on line 369
+[20-Aug-2026 11:26:11 Asia/Jakarta] PHP Deprecated:  strtoupper(): Passing null to parameter #1 ($string) of type string is deprecated in C:\xampp\htdocs\rsud_mobile.php on line 369
+[20-Aug-2026 11:58:41 Asia/Jakarta] PHP Warning:  Undefined variable $namaSuamiIstri in C:\xampp\htdocs\rsud_mobile.php on line 372
+[20-Aug-2026 11:58:41 Asia/Jakarta] PHP Deprecated:  strtoupper(): Passing null to parameter #1 ($string) of type string is deprecated in C:\xampp\htdocs\rsud_mobile.php on line 372
+[20-Aug-2026 14:31:26 Asia/Jakarta] PHP Warning:  Undefined variable $progress in C:\xampp\htdocs\rsud_mobile.php on line 437
