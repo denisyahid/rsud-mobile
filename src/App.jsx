@@ -28,6 +28,18 @@ function OfflineBanner() {
   );
 }
 
+// Memastikan satu nomor registrasi/kunjungan hanya muncul 1 kali (anti duplikasi tampilan)
+function dedupeRiwayat(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  return list.filter((item) => {
+    const key = item?.noregistrasi || item?.norec;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function App() {
   const [bootState, setBootState] = useState('loading'); // 'loading' | 'ready'
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -83,7 +95,7 @@ export default function App() {
         setLabOrders(ordersResult.lab || []);
         setRadOrders(ordersResult.rad || []);
       }
-      if (riwayatResult.success) setRiwayat(riwayatResult.data || []);
+      if (riwayatResult.success) setRiwayat(dedupeRiwayat(riwayatResult.data));
     } catch (e) {
       console.error('Error loading dashboard:', e);
     }
@@ -93,7 +105,7 @@ export default function App() {
   const refreshRiwayat = useCallback(async () => {
     try {
       const riwayatResult = await apiCall({ action: 'get_riwayat' });
-      if (riwayatResult.success) setRiwayat(riwayatResult.data || []);
+      if (riwayatResult.success) setRiwayat(dedupeRiwayat(riwayatResult.data));
     } catch (e) {
       console.error('Error refreshing riwayat:', e);
     }

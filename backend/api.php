@@ -52,8 +52,22 @@ $HARI_NAMA = [1 => 'Senin', 2 => 'Selasa', 3 => 'Rabu', 4 => 'Kamis', 5 => 'Juma
 // ============================================================
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 $originOk = false;
-foreach (['rsudmalangbong', 'tail351109.ts.net', 'localhost', '127.0.0.1', 'capacitor://'] as $frag) {
-    if ($origin !== '' && stripos($origin, $frag) !== false) { $originOk = true; break; }
+$allowedOrigins = [
+    'rsudmalangbong',
+    'tail351109.ts.net',
+    'localhost',
+    '127.0.0.1',
+    'capacitor://',
+    'https://rsud-mobile.vercel.app',
+    'https://rsud-mobile.vercel.app/',
+    'rsud-mobile.vercel.app',
+    'vercel.app',
+];
+foreach ($allowedOrigins as $frag) {
+    if ($origin !== '' && stripos($origin, $frag) !== false) {
+        $originOk = true;
+        break;
+    }
 }
 if ($originOk) {
     header("Access-Control-Allow-Origin: $origin");
@@ -64,14 +78,15 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With');
 
 $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
+    || (stripos($origin, 'https://') === 0);
 
 session_set_cookie_params([
     'lifetime' => 0,
     'path'     => '/',
-    'secure'   => $isHttps,   // otomatis mengikuti skema request
+    'secure'   => $isHttps,   // otomatis mengikuti skema request (wajib true untuk cross-origin HTTPS)
     'httponly' => true,
-    'samesite' => 'None',
+    'samesite' => $isHttps ? 'None' : 'Lax',
 ]);
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -269,11 +284,19 @@ function terpakaiSubquery() {
 
 // Reservasi aktif milik pasien (belum check-in, belum pulang, tidak dibatalkan)
 function findActiveBooking($pdo, $pasienId, $fromDate = null) {
-    $sql = "SELECT pd.noregistrasi, pd.tglregistrasi, ru.namaruangan, pg.namalengkap AS dokter
+    $sql = "SELECT pd.noregistrasi, pd.tglregistrasi, ru.namaruangan,
+                   COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS dokter
             FROM pasiendaftar_t pd
             LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
-            LEFT JOIN antrianpasiendiperiksa_t a ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-            LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+            LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+            LEFT JOIN LATERAL (
+                SELECT ant.objectpegawaifk
+                FROM antrianpasiendiperiksa_t ant
+                WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                ORDER BY (ant.objectruanganfk = pd.objectruanganlastfk) DESC
+                LIMIT 1
+            ) a ON true
+            LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
             WHERE pd.nocmfk = :pid AND pd.statusenabled = true
               AND pd.tglpulang IS NULL AND (pd.ischeckin = false OR pd.ischeckin IS NULL)";
     $params = [':pid' => $pasienId];
@@ -815,8 +838,11 @@ switch ($action) {
     // ---------- RIWAYAT KUNJUNGAN ----------
     case 'get_riwayat':
         $pasienId = requireLogin();
+        // LATERAL subquery LIMIT 1 menjamin antrianpasiendiperiksa_t TIDAK menggandakan
+        // baris pasiendaftar_t (1 kunjungan = tepat 1 baris riwayat di aplikasi)
         $sql = "SELECT pd.norec, pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin,
-                       ru.namaruangan, pg.namalengkap AS namadokter,
+                       ru.namaruangan,
+                       COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS namadokter,
                        a.noantrian, a.prefixnoantrian,
                        CASE WHEN pd.statusenabled = false THEN 'Dibatalkan'
                             WHEN pd.tglpulang IS NOT NULL THEN 'Selesai'
@@ -826,22 +852,39 @@ switch ($action) {
                 FROM pasiendaftar_t pd
                 LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
                 LEFT JOIN departemen_m d ON d.id = ru.objectdepartemenfk
-                LEFT JOIN antrianpasiendiperiksa_t a
-                       ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-                LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+                LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+                LEFT JOIN LATERAL (
+                    SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
+                    FROM antrianpasiendiperiksa_t ant
+                    WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                    ORDER BY
+                        (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
+                        (ant.objectpegawaifk IS NOT NULL) DESC,
+                        ant.noantrian ASC
+                    LIMIT 1
+                ) a ON true
+                LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
                 WHERE pd.nocmfk = :pid
                 ORDER BY pd.tglregistrasi DESC";
         $st = $pdo->prepare($sql);
         $st->execute([':pid' => $pasienId]);
-        $data = $st->fetchAll();
-        foreach ($data as &$r) {
+        $rows = $st->fetchAll();
+        $unique = [];
+        $seen = [];
+        foreach ($rows as $r) {
+            $noreg = $r['noregistrasi'] ?? $r['norec'];
+            // Pencegahan lapis kedua: abaikan bila noregistrasi duplikat
+            if (isset($seen[$noreg])) continue;
+            $seen[$noreg] = true;
+
             $r['is_checkin']     = (bool)$r['ischeckin'];
             $r['noantrian_full'] = !empty($r['prefixnoantrian']) && $r['noantrian'] !== null
                 ? $r['prefixnoantrian'] . '-' . str_pad((string)$r['noantrian'], 3, '0', STR_PAD_LEFT)
                 : null;
             unset($r['ischeckin'], $r['noantrian'], $r['prefixnoantrian']);
+            $unique[] = $r;
         }
-        respond(['success' => true, 'data' => $data]);
+        respond(['success' => true, 'data' => $unique]);
         break;
 
     // ---------- DETAIL TIKET ----------
@@ -851,7 +894,8 @@ switch ($action) {
         if ($noreg === '') respond(['error' => 'noregistrasi wajib diisi'], 400);
         $st = $pdo->prepare("SELECT pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin,
                                     p.namapasien, p.nocm,
-                                    ru.namaruangan AS poliklinik, pg.namalengkap AS dokter,
+                                    ru.namaruangan AS poliklinik,
+                                    COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS dokter,
                                     a.noantrian, a.prefixnoantrian, a.statusantrian,
                                     CASE WHEN pd.statusenabled = false THEN 'Dibatalkan'
                                          WHEN pd.tglpulang IS NOT NULL THEN 'Selesai'
@@ -859,9 +903,18 @@ switch ($action) {
                              FROM pasiendaftar_t pd
                              JOIN pasien_m p ON p.id = pd.nocmfk
                              LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
-                             LEFT JOIN antrianpasiendiperiksa_t a
-                                    ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-                             LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+                             LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+                             LEFT JOIN LATERAL (
+                                 SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
+                                 FROM antrianpasiendiperiksa_t ant
+                                 WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                                 ORDER BY
+                                     (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
+                                     (ant.objectpegawaifk IS NOT NULL) DESC,
+                                     ant.noantrian ASC
+                                 LIMIT 1
+                             ) a ON true
+                             LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
                              WHERE pd.noregistrasi = :noreg AND pd.nocmfk = :pid
                              LIMIT 1");
         $st->execute([':noreg' => $noreg, ':pid' => $pasienId]);
@@ -897,8 +950,12 @@ switch ($action) {
         $st = $pdo->prepare("SELECT pd.norec, pd.noregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
                                     ap.norec AS norec_apd, ap.statusantrian
                              FROM pasiendaftar_t pd
-                             LEFT JOIN antrianpasiendiperiksa_t ap
-                                    ON ap.noregistrasi = pd.noregistrasi AND COALESCE(ap.statusenabled, true) = true
+                             LEFT JOIN LATERAL (
+                                 SELECT norec, statusantrian FROM antrianpasiendiperiksa_t
+                                 WHERE noregistrasi = pd.noregistrasi AND COALESCE(statusenabled, true) = true
+                                 ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
+                                 LIMIT 1
+                             ) ap ON true
                              WHERE pd.noregistrasi = :noreg AND pd.nocmfk = :pid
                              LIMIT 1 FOR UPDATE OF pd");
         $st->execute([':noreg' => $noreg, ':pid' => $pasienId]);
@@ -953,7 +1010,12 @@ switch ($action) {
         $pdo->beginTransaction();
         $st = $pdo->prepare("SELECT pd.norec, pd.tglpulang, pd.ischeckin, ap.statusantrian
                              FROM pasiendaftar_t pd
-                             LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+                             LEFT JOIN LATERAL (
+                                 SELECT statusantrian FROM antrianpasiendiperiksa_t
+                                 WHERE noregistrasi = pd.noregistrasi AND statusenabled = true
+                                 ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
+                                 LIMIT 1
+                             ) ap ON true
                              WHERE pd.noregistrasi = :noreg AND pd.nocmfk = :pid
                              LIMIT 1 FOR UPDATE OF pd");
         $st->execute([':noreg' => $noreg, ':pid' => $pasienId]);
