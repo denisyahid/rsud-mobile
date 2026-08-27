@@ -1,0 +1,994 @@
+@import "tailwindcss";
+
+/* ── Palet hijau lebih cerah (Material Green) untuk semua utility Tailwind ── */
+@theme {
+  --color-green-50: #E9F8E9;
+  --color-green-100: #D5F2D3;
+  --color-green-200: #B0E6AF;
+  --color-green-300: #87D58A;
+  --color-green-400: #5CBE61;
+  --color-green-500: #4CAF50;
+  --color-green-600: #43A047;
+  --color-green-700: #388E3C;
+  --color-green-800: #2E7D32;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MATERIAL DESIGN 3 (Material You) — RSUD Malangbong Mobile
+   Seed warna: Hijau (green). Gaya Android modern.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Warna inti M3 ── */
+  --m3-primary: #388E3C;
+  --m3-on-primary: #FFFFFF;
+  --m3-primary-container: #D8F5D5;
+  --m3-on-primary-container: #0B3D10;
+  --m3-secondary: #5C6F55;
+  --m3-on-secondary: #FFFFFF;
+  --m3-secondary-container: #DCECDA;
+  --m3-on-secondary-container: #101F10;
+  --m3-tertiary: #38656C;
+  --m3-tertiary-container: #BCEBF2;
+
+  /* ── Surface ── */
+  --m3-surface: #FAFEF8;
+  --m3-surface-dim: #D8DCD4;
+  --m3-surface-container-lowest: #FFFFFF;
+  --m3-surface-container-low: #F1F6ED;
+  --m3-surface-container: #EBF0E7;
+  --m3-surface-container-high: #E5EBE1;
+  --m3-surface-container-highest: #DFE5DB;
+
+  /* ── On / Outline ── */
+  --m3-on-surface: #1A1C18;
+  --m3-on-surface-variant: #44483F;
+  --m3-outline: #74796F;
+  --m3-outline-variant: #C4C9BE;
+  --m3-error: #BA1A1A;
+  --m3-on-error: #FFFFFF;
+  --m3-error-container: #FFDAD6;
+
+  /* ── Elevasi & radius M3 ── */
+  --m3-elev-1: 0 1px 2px rgba(0,0,0,.28), 0 1px 3px 1px rgba(0,0,0,.12);
+  --m3-elev-2: 0 1px 2px rgba(0,0,0,.3), 0 2px 6px 2px rgba(0,0,0,.15);
+  --m3-elev-3: 0 4px 8px rgba(0,0,0,.25), 0 4px 16px rgba(0,0,0,.18);
+  --radius-xl: 28px;
+  --radius-lg: 20px;
+  --radius-md: 16px;
+  --radius-sm: 12px;
+
+  --nav-height: 64px;
+}
+
+/* ═══════════════ Base Android ═══════════════ */
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+html, body {
+  overscroll-behavior-y: none;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--m3-surface-dim);
+  color: var(--m3-on-surface);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  touch-action: manipulation;
+  margin: 0;
+}
+
+/* Sembunyikan scrollbar untuk carousel (hari di jadwal) */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Scrollbar ramping khas Android */
+.scroll-area { scrollbar-width: thin; scrollbar-color: var(--m3-outline-variant) transparent; }
+.scroll-area::-webkit-scrollbar { width: 4px; }
+.scroll-area::-webkit-scrollbar-thumb { background: var(--m3-outline-variant); border-radius: 99px; }
+
+/* ═══════════════ App Shell (bingkai hp) ═══════════════ */
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--m3-surface);
+  position: relative;
+  box-shadow: 0 0 48px rgba(0, 0, 0, .10);
+}
+@media (min-width: 520px) {
+  .app-shell { border-left: 1px solid var(--m3-outline-variant); border-right: 1px solid var(--m3-outline-variant); }
+}
+.app-content {
+  padding: 12px 16px;
+  padding-bottom: calc(var(--nav-height) + 40px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ═══════════════ Tombol: ripple + posisi ═══════════════ */
+button, a.btn-outline {
+  position: relative;
+  overflow: hidden;
+}
+.ripple-ink {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .18;
+  transform: scale(0);
+  pointer-events: none;
+  animation: m3-ripple .6s cubic-bezier(.2,.8,.2,1) forwards;
+}
+@keyframes m3-ripple { to { transform: scale(1); opacity: 0; } }
+
+/* ═══════════════ Animasi inti M3 ═══════════════ */
+@keyframes m3-fade-in   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m3-fade-up   { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes m3-pop       { 0% { opacity: 0; transform: scale(.88); } 60% { transform: scale(1.03); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes m3-slide-up  { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes m3-spin      { to { transform: rotate(360deg); } }
+@keyframes m3-shimmer   { to { background-position: -200% 0; } }
+@keyframes m3-progress  { 0% { left: -45%; } 100% { left: 115%; } }
+@keyframes m3-shake     { 10%, 90% { transform: translateX(-1px); } 20%, 80% { transform: translateX(2px); } 30%, 50%, 70% { transform: translateX(-4px); } 40%, 60% { transform: translateX(4px); } }
+.anim-fade      { animation: m3-fade-in .25s ease both; }
+.anim-fade-up   { animation: m3-fade-up .35s cubic-bezier(.2,.8,.2,1) both; }
+.anim-pop       { animation: m3-pop .38s cubic-bezier(.2,.8,.2,1) both; }
+.anim-shake     { animation: m3-shake .45s both; }
+
+/* Daftar dengan animasi berurutan (stagger). Pakai "backwards" agar
+   :active / transform tetap berfungsi setelah animasi selesai. */
+.stagger > * {
+  animation: m3-fade-up .42s cubic-bezier(.2,.8,.2,1) backwards;
+}
+.stagger > *:nth-child(1)  { animation-delay: .02s; }
+.stagger > *:nth-child(2)  { animation-delay: .07s; }
+.stagger > *:nth-child(3)  { animation-delay: .12s; }
+.stagger > *:nth-child(4)  { animation-delay: .17s; }
+.stagger > *:nth-child(5)  { animation-delay: .22s; }
+.stagger > *:nth-child(6)  { animation-delay: .27s; }
+.stagger > *:nth-child(7)  { animation-delay: .32s; }
+.stagger > *:nth-child(8)  { animation-delay: .37s; }
+.stagger > *:nth-child(9)  { animation-delay: .42s; }
+.stagger > *:nth-child(10) { animation-delay: .47s; }
+.stagger > *:nth-child(n+11) { animation-delay: .52s; }
+
+/* ═══════════════ Skeleton / shimmer loading ═══════════════ */
+/* Catatan: radius skeleton diatur lewat utility Tailwind (rounded-*)
+   agar tidak bertabrakan dengan cascade layer Tailwind v4. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--m3-surface-container-high);
+}
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 25%, rgba(255,255,255,.7) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: m3-shimmer 1.4s linear infinite;
+}
+
+/* Spinner M3 */
+.m3-spinner {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 4px solid var(--m3-outline-variant);
+  border-top-color: var(--m3-primary);
+  animation: m3-spin .8s linear infinite;
+}
+
+/* Bar progres indeterminasi ala Android */
+.m3-progress {
+  position: relative;
+  width: 190px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(255,255,255,.22);
+  overflow: hidden;
+}
+.m3-progress::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 42%;
+  border-radius: 99px;
+  background: #fff;
+  animation: m3-progress 1.15s cubic-bezier(.4,0,.2,1) infinite;
+}
+
+/* Spinner kecil di dalam tombol */
+.btn-spinner {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  border: 2.5px solid rgba(255,255,255,.35);
+  border-top-color: #fff;
+  animation: m3-spin .7s linear infinite;
+  display: inline-block;
+}
+
+/* ═══════════════ Splash Screen ═══════════════ */
+.splash-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: linear-gradient(165deg, #1B5E20 0%, #2E7D32 48%, #43A047 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.splash-screen::before,
+.splash-screen::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255,255,255,.06);
+  pointer-events: none;
+}
+.splash-screen::before { width: 340px; height: 340px; top: -120px; right: -110px; }
+.splash-screen::after  { width: 260px; height: 260px; bottom: -100px; left: -90px; }
+.splash-inner {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 24px;
+}
+.splash-logo-wrap {
+  width: 96px; height: 96px;
+  border-radius: 30px;
+  background: rgba(255,255,255,.14);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+}
+.splash-logo-wrap img { width: 100%; height: 100%; object-fit: contain; padding: 12px; }
+.splash-fallback { font-size: 46px; color: #fff; opacity: .95; }
+.splash-title {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  margin: 0;
+  text-shadow: 0 2px 12px rgba(0,0,0,.2);
+}
+.splash-sub {
+  font-size: 12px;
+  color: rgba(255,255,255,.72);
+  letter-spacing: 2.2px;
+  text-transform: uppercase;
+  margin: -6px 0 4px;
+  font-weight: 600;
+}
+.splash-msg { font-size: 12px; color: rgba(255,255,255,.58); margin: 0; }
+
+/* ═══════════════ Kartu M3 ═══════════════ */
+.card {
+  background: var(--m3-surface-container-lowest);
+  border-radius: var(--radius-md);
+  box-shadow: var(--m3-elev-1);
+  border: 1px solid rgba(0,0,0,.03);
+}
+.card-order {
+  transition: transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s ease, border-color .2s;
+  border-left: 4px solid var(--m3-primary);
+}
+.card-order:active {
+  transform: scale(.975);
+  box-shadow: var(--m3-elev-2);
+}
+
+.badge-status {
+  font-size: .6rem;
+  padding: .22rem .62rem;
+  border-radius: 99px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  display: inline-flex;
+  align-items: center;
+  gap: .25rem;
+}
+.badge-lab        { background: #D8F5D5; color: #1B5E20; }
+.badge-rad        { background: #FFF3D6; color: #7A5B12; }
+.badge-selesai    { background: #D8F5D5; color: #1B5E20; }
+.badge-verifikasi { background: #FEF3C7; color: #92400E; }
+
+/* ═══════════════ Tombol ═══════════════ */
+.btn-outline {
+  border: 1px solid var(--m3-outline-variant);
+  padding: .5rem .85rem;
+  border-radius: 99px;
+  font-size: .72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  background: var(--m3-surface-container-lowest);
+  color: var(--m3-on-surface-variant);
+  transition: background .2s, border-color .2s, transform .15s;
+  width: 100%;
+}
+.btn-outline:hover { background: var(--m3-surface-container-low); }
+.btn-outline:active { transform: scale(.97); }
+.btn-green {
+  background: var(--m3-primary);
+  color: #fff;
+  border: none;
+  box-shadow: 0 2px 8px rgba(56,142,60,.35);
+}
+.btn-green:hover { background: #2E7D32; }
+
+.btn-submit {
+  width: 100%;
+  padding: .9rem;
+  background: var(--m3-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 1rem;
+  box-shadow: 0 4px 14px rgba(56,142,60,.45);
+  transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s, box-shadow .2s;
+  letter-spacing: .2px;
+}
+.btn-submit:active { transform: scale(.97); }
+.btn-submit:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+
+.link-back {
+  color: var(--m3-primary);
+  font-weight: 600;
+  font-size: .85rem;
+  padding: .4rem .8rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+}
+
+/* ═══════════════ Login Screen M3 ═══════════════ */
+.login-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 22px calc(28px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(170deg, #DFF5DB 0%, #FBFFFA 48%, #EDF9E9 100%);
+  position: relative;
+  overflow: hidden;
+}
+.login-screen::before,
+.login-screen::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(56,142,60,.10);
+  pointer-events: none;
+}
+.login-screen::before { width: 320px; height: 320px; top: -130px; right: -110px; }
+.login-screen::after  { width: 240px; height: 240px; bottom: -110px; left: -80px; }
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  background: rgba(255,255,255,.92);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border-radius: var(--radius-xl);
+  padding: 34px 26px 28px;
+  box-shadow: var(--m3-elev-3);
+  border: 1px solid rgba(255,255,255,.65);
+}
+.login-logo-wrap {
+  width: 84px; height: 84px;
+  margin: 0 auto 14px;
+  border-radius: 26px;
+  background: #FFFFFF;
+  border: 2px solid var(--m3-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 8px 20px rgba(56,142,60,.25);
+}
+.login-logo-wrap img { width: 100%; height: 100%; object-fit: contain; padding: 12px; }
+.login-fallback { font-size: 38px; color: var(--m3-primary); }
+.login-title {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--m3-on-surface);
+  text-align: center;
+  margin: 0 0 4px;
+  letter-spacing: .2px;
+}
+.login-sub {
+  font-size: 12.5px;
+  color: var(--m3-on-surface-variant);
+  text-align: center;
+  margin: 0 0 22px;
+  line-height: 1.5;
+}
+.login-error {
+  background: var(--m3-error-container);
+  color: var(--m3-on-error-container, #690005);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.login-field {
+  position: relative;
+  margin-bottom: 16px;
+}
+.login-field > i {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--m3-primary);
+  font-size: 15px;
+}
+.login-field input {
+  width: 100%;
+  padding: 15px 16px 15px 44px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--m3-outline-variant);
+  background: var(--m3-surface-container-low);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-align: center;
+  color: var(--m3-on-surface);
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.login-field input::placeholder { letter-spacing: .2px; font-weight: 400; color: var(--m3-outline); }
+.login-field input:focus {
+  outline: none;
+  border-color: var(--m3-primary);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(56,142,60,.16);
+}
+.login-field input.border-red-400 { border-color: #F87171; }
+.login-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--m3-on-surface-variant);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.45;
+  opacity: .85;
+}
+.login-hint i { margin-top: 2px; color: var(--m3-primary); }
+.login-btn {
+  width: 100%;
+  padding: 15px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--m3-primary);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  box-shadow: 0 4px 16px rgba(56,142,60,.45);
+  transition: transform .15s, background .2s, box-shadow .2s;
+}
+.login-btn:active { transform: scale(.97); }
+.login-btn:disabled { opacity: .75; }
+.login-register {
+  width: 100%;
+  margin-top: 18px;
+  padding: 13px;
+  border-radius: var(--radius-md);
+  border: 1.5px dashed var(--m3-primary);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background .2s, transform .15s;
+}  .login-register:active { transform: scale(.97); background: #C4ECC2; }
+
+  .login-panduan {
+    width: 100%;
+    margin-top: 10px;
+    padding: 11px;
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(0,0,0,.08);
+    background: transparent;
+    color: var(--m3-on-surface-variant);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .18s ease;
+  }
+  .login-panduan:hover { background: rgba(0,0,0,.04); color: var(--m3-primary); }
+  .login-panduan:active { transform: scale(.97); }
+
+
+/* ═══════════════ Profile Bar (sticky & mengambang di atas) ═══════════════ */
+.profile-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px;
+  margin-bottom: 14px;
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(0,0,0,.05);
+  border-radius: 18px;
+  box-shadow: var(--m3-elev-2);
+  animation: m3-fade-up .4s cubic-bezier(.2,.8,.2,1) backwards;
+}
+.profile-bar-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,.06);
+  box-shadow: var(--m3-elev-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.profile-bar-logo img { width: 100%; height: 100%; object-fit: contain; padding: 6px; }
+.profile-bar-logo-fallback { font-size: 20px; color: var(--m3-primary); }
+.profile-bar .profile-name {
+  font-size: 14.5px;
+  font-weight: 800;
+  color: var(--m3-on-surface);
+  letter-spacing: .1px;
+  line-height: 1.25;
+}
+.profile-bar .profile-meta {
+  font-size: 11px;
+  color: var(--m3-on-surface-variant);
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.profile-bar .profile-meta i { font-size: 10px; }
+.profile-bar .profile-dot { margin: 0 2px; opacity: .55; }
+.profile-icon-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid rgba(56,142,60,.25);
+  background: var(--m3-primary-container);
+  color: var(--m3-on-primary-container);
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .2s, transform .15s;
+}
+.profile-icon-btn:active { transform: scale(.92); background: #C4ECC2; }
+
+/* ═══════════════ Bottom Navigation M3 (Android 13) ═══════════════ */
+.bottom-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 40;
+}
+@media (min-width: 520px) {
+  .bottom-bar { max-width: 480px; margin: 0 auto; }
+}
+.bottom-nav {
+  background: rgba(255,255,255,.9);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  display: flex;
+  justify-content: space-around;
+  padding: 6px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(0,0,0,.05);
+  box-shadow: 0 -4px 20px rgba(0,0,0,.08);
+}
+.nav-item {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--m3-on-surface-variant);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .1px;
+  cursor: pointer;
+  transition: color .2s;
+}
+.nav-item i {
+  font-size: 1.35rem;
+  transition: transform .28s cubic-bezier(.2,.8,.2,1);
+}
+.nav-item .nav-label { position: relative; }
+.nav-pill {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 56px;
+  height: 30px;
+  border-radius: 16px;
+  background: var(--m3-primary-container);
+  transform: translateX(-50%) scale(.5);
+  opacity: 0;
+  transition: transform .28s cubic-bezier(.2,.8,.2,1), opacity .22s ease;
+}
+.nav-item.active { color: var(--m3-primary); }
+.nav-item.active i { transform: translateY(-1px) scale(1.12); }
+.nav-item.active .nav-pill { transform: translateX(-50%) scale(1); opacity: 1; }
+
+/* ═══════════════ Form M3 (filled) ═══════════════ */
+.form-group { margin-bottom: 1rem; }
+.form-group label {
+  display: block;
+  font-size: .82rem;
+  font-weight: 700;
+  color: var(--m3-on-surface);
+  margin-bottom: .3rem;
+  letter-spacing: .1px;
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
+  padding: .72rem .85rem;
+  border: 1.5px solid var(--m3-outline-variant);
+  border-radius: var(--radius-sm);
+  font-size: 16px;
+  background: var(--m3-surface-container-low);
+  color: var(--m3-on-surface);
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: var(--m3-primary);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(56,142,60,.16);
+}
+.form-group select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2344483F' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 15px;
+  padding-right: 36px;
+}
+.form-group .input-with-button { display: flex; gap: .5rem; }
+.form-group .input-with-button input { flex: 1; }
+.form-group .input-with-button button {
+  padding: .7rem 1.1rem;
+  background: var(--m3-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  font-size: .82rem;
+  cursor: pointer;
+  transition: background .2s, transform .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+.form-group .input-with-button button:active { background: #2E7D32; transform: scale(.96); }
+.form-group .input-with-button button:disabled { opacity: .55; }
+
+.form-section-title {
+  font-weight: 800;
+  font-size: .95rem;
+  color: var(--m3-on-surface);
+  margin: 1.2rem 0 .8rem;
+  padding-bottom: .35rem;
+  border-bottom: 2px solid var(--m3-outline-variant);
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+.checkbox-inline { display: flex; align-items: center; gap: .5rem; }
+.checkbox-inline input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  accent-color: var(--m3-primary);
+}
+
+.input-error {
+  color: var(--m3-error);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.input-error::before {
+  content: '\f071';
+  font-family: "Font Awesome 6 Free";
+  font-weight: 900;
+  font-size: 11px;
+}
+
+/* Autocomplete */
+.autocomplete-container { position: relative; }
+.suggestion-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--m3-surface-container-lowest);
+  border: 1px solid var(--m3-outline-variant);
+  border-radius: var(--radius-sm);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 50;
+  box-shadow: var(--m3-elev-2);
+  animation: m3-fade-in .18s ease both;
+}
+.suggestion-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--m3-surface-container-high);
+  font-size: .85rem;
+  transition: background .15s;
+}
+.suggestion-item:last-child { border-bottom: none; }
+.suggestion-item:hover { background: var(--m3-primary-container); }
+
+/* ═══════════════ Loader lama (kompatibel) ═══════════════ */
+.loader {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid #DCE3D8;
+  border-radius: 50%;
+  border-top-color: var(--m3-primary);
+  animation: m3-spin .8s linear infinite;
+  flex-shrink: 0;
+}
+.loader-light { border-color: rgba(255,255,255,.35); border-top-color: #fff; }
+
+.bg-primary    { background: var(--m3-primary); }
+.text-primary  { color: var(--m3-primary); }
+.hover-primary:hover { background: #2E7D32; }
+
+/* ═══════════════ Modal M3 (bottom sheet / dialog) ═══════════════ */
+/* Overlay TIDAK menutupi header profil & nav bawah — dimulai di bawah
+   header (62px + safe-area) dan berakhir di atas bottom nav, sehingga
+   header & tab tetap terlihat saat modal bukti/tiket terbuka. */
+.modal-overlay {
+  position: fixed;
+  top: calc(62px + env(safe-area-inset-top, 0px));
+  bottom: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  background: rgba(0,0,0,.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: m3-fade-in .2s ease both;
+}
+.modal-sheet {
+  background: var(--m3-surface-container-lowest);
+  border-radius: var(--radius-lg);
+  max-width: 420px;
+  width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: var(--m3-elev-3);
+  animation: m3-slide-up .32s cubic-bezier(.2,.8,.2,1) both;
+}
+
+/* ═══════════════ Kop surat tiket (logo + nama RS) ═══════════════ */
+.ticket-kop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.ticket-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.ticket-kop-name {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--m3-primary);
+  line-height: 1.2;
+}
+.ticket-kop-sub {
+  font-size: 10px;
+  color: var(--m3-on-surface-variant);
+  line-height: 1.4;
+}
+
+/* ═══════════════ Tombol refresh mengambang (FAB) ═══════════════ */
+.fab-refresh {
+  position: fixed;
+  right: 24px;
+  bottom: calc(var(--nav-height) + 24px + env(safe-area-inset-bottom, 0px));
+  z-index: 35;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: none;
+  background: var(--m3-primary);
+  color: #fff;
+  font-size: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(56,142,60,.45), var(--m3-elev-2);
+  cursor: pointer;
+  transition: transform .18s cubic-bezier(.2,.8,.2,1), background .2s, box-shadow .2s;
+}
+.fab-refresh:active { transform: scale(.9); }
+.fab-refresh:disabled { opacity: .85; }
+@media (min-width: 520px) {
+  /* Sejajarkan dengan tepi kanan shell aplikasi (max-width 480px, center) */
+  .fab-refresh { right: calc(50vw - 240px + 24px); }
+}
+
+/* ═══════════════ Scanner Check-in ═══════════════ */
+.scanner-box {
+  width: 100%;
+  max-width: 300px;
+  margin: 0 auto;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #0f172a;
+  border: 2px solid #d1d5db;
+}
+.scanner-box video {
+  width: 100% !important;
+  display: block;
+}
+.scanner-hint {
+  font-size: .75rem;
+  color: #64748b;
+  text-align: center;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* ═══════════════ Tiket ═══════════════ */
+.ticket-card {
+  background: linear-gradient(135deg, #ffffff 0%, #F4FAF2 100%);
+  border: 2px dashed var(--m3-primary);
+  border-radius: var(--radius-md);
+  padding: 22px;
+  box-shadow: 0 10px 25px -5px rgba(56,142,60,.16);
+  position: relative;
+}
+.ticket-card::before,
+.ticket-card::after {
+  content: '';
+  position: absolute;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--m3-surface-container-low);
+  top: 50%;
+  transform: translateY(-50%);
+}
+.ticket-card::before { left: -11px; }
+.ticket-card::after  { right: -11px; }
+.ticket-badge {
+  background: var(--m3-primary);
+  color: #fff;
+  font-weight: 800;
+  padding: 4px 14px;
+  border-radius: 99px;
+  font-size: .72rem;
+  display: inline-block;
+  letter-spacing: 1px;
+  box-shadow: 0 2px 8px rgba(56,142,60,.3);
+}
+
+/* ═══════════════ Print ═══════════════ */
+@media print {
+  body * { visibility: hidden; }
+  .printable-ticket, .printable-ticket * { visibility: visible; }
+  .printable-ticket {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}
+
+/* ─── Banner koneksi internet terputus ─────────────────────────── */
+.offline-banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 16px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+  background: #FEF3C7;
+  border-bottom: 1px solid #FCD34D;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, .25);
+}
+.offline-icon {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.6);
+  border-radius: 50%;
+}
+.offline-icon .fa-wifi { font-size: 17px; color: #B45309; }
+.offline-icon .fa-slash {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  color: #DC2626;
+  z-index: 2;
+}
+.offline-title { font-size: 13px; font-weight: 700; color: #92400E; margin: 0; }
+.offline-sub { font-size: 11px; color: #B45309; margin: 0; }

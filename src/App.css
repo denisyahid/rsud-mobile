@@ -1,0 +1,116 @@
+/* index.css atau App.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl shadow-md;
+  }
+  .card-order {
+    @apply transition-all duration-200 border-l-4 border-green-700;
+  }
+  .card-order:active {
+    @apply transform scale-95;
+  }
+  .badge-status {
+    @apply text-xs px-2 py-1 rounded-full font-semibold;
+  }
+  .badge-lab {
+    @apply bg-green-100 text-green-800;
+  }
+  .badge-rad {
+    @apply bg-yellow-50 text-yellow-800;
+  }
+  .badge-selesai {
+    @apply bg-green-100 text-green-800;
+  }
+  .badge-verifikasi {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+  .btn-outline {
+    @apply border border-gray-200 rounded-full px-3 py-1 text-xs font-semibold inline-flex items-center justify-center gap-1 bg-white text-gray-700 transition-all duration-200 w-full hover:bg-gray-100;
+  }
+  .btn-green {
+    @apply bg-green-700 text-white border-none hover:bg-green-800;
+  }
+  .profile-card {
+    @apply bg-gradient-to-br from-green-700 to-green-900 rounded-3xl p-5 text-white shadow-lg mb-5;
+  }
+  .profile-avatar {
+    @apply w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-3xl text-white backdrop-blur border-2 border-white/30;
+  }
+  .bottom-nav {
+    @apply fixed bottom-0 left-0 right-0 bg-white shadow-md flex justify-around py-2 border-t border-gray-200 z-40;
+  }
+  .nav-item {
+    @apply flex flex-col items-center text-xs text-gray-400 px-3 py-1 bg-transparent cursor-pointer transition-colors duration-200 flex-1;
+  }
+  .nav-item i {
+    @apply text-xl mb-0.5;
+  }
+  .nav-item.active {
+    @apply text-green-700;
+  }
+  .nav-item.active i {
+    @apply text-green-700;
+  }
+  .tab-content {
+    @apply hidden animate-fadeIn;
+  }
+  .tab-content.active {
+    @apply block;
+  }
+  .scroll-area {
+    @apply max-h-[calc(100vh-280px)] overflow-y-auto pb-2;
+  }
+  .form-group {
+    @apply mb-4;
+  }
+  .form-group label {
+    @apply block text-sm font-medium text-gray-700 mb-1;
+  }
+  .form-group input, 
+  .form-group select, 
+  .form-group textarea {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-700 focus:border-transparent;
+  }
+  .form-group .input-with-button {
+    @apply flex gap-2;
+  }
+  .form-group .input-with-button input {
+    @apply flex-1;
+  }
+  .form-group .input-with-button button {
+    @apply px-4 py-2 bg-green-700 text-white rounded-xl font-semibold text-sm cursor-pointer transition-colors duration-200 hover:bg-green-800;
+  }
+  .form-section-title {
+    @apply font-bold text-base text-gray-800 mt-5 mb-3 pb-1 border-b-2 border-gray-200;
+  }
+  .checkbox-inline {
+    @apply flex items-center gap-2;
+  }
+  .checkbox-inline input[type="checkbox"] {
+    @apply w-5 h-5 accent-green-700;
+  }
+  .btn-submit {
+    @apply w-full py-3 bg-green-700 text-white rounded-full font-semibold text-base cursor-pointer mt-4 transition-colors duration-200 hover:bg-green-800;
+  }
+  .loader {
+    @apply inline-block w-5 h-5 border-2 border-gray-200 border-t-green-700 rounded-full animate-spin;
+  }
+  .modal-overlay {
+    @apply fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4;
+  }
+  .modal-content {
+    @apply bg-white rounded-3xl max-w-md w-full max-h-[70vh] overflow-y-auto p-6 shadow-2xl;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0.4; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease;
+}

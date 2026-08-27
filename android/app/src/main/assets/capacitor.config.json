@@ -1,0 +1,19 @@
+{
+	"appId": "com.rsudmalangbong.mobile",
+	"appName": "RSUD Malangbong",
+	"webDir": "dist",
+	"android": {
+		"allowMixedContent": false,
+		"backgroundColor": "#14521A"
+	},
+	"plugins": {
+		"SplashScreen": {
+			"launchShowDuration": 600,
+			"launchAutoHide": true,
+			"backgroundColor": "#1B5E20",
+			"showSpinner": false,
+			"splashFullScreen": true,
+			"splashImmersive": true
+		}
+	}
+}
