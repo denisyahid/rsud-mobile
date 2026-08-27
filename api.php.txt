@@ -145,6 +145,43 @@ function genUuid() {
         mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffffffff));
 }
 
+// Kolom tabel (cache per request) — insert hanya ke kolom yang benar-benar ada.
+function tableColumns($pdo, $table) {
+    static $cache = [];
+    $key = strtolower($table);
+    if (isset($cache[$key])) return $cache[$key];
+    $st = $pdo->prepare("SELECT column_name FROM information_schema.columns
+                         WHERE table_schema = current_schema() AND table_name = :t");
+    $st->execute([':t' => $table]);
+    $cache[$key] = array_map('strtolower', array_column($st->fetchAll(), 'column_name'));
+    return $cache[$key];
+}
+
+function tableHasColumn($pdo, $table, $col) {
+    return in_array(strtolower($col), tableColumns($pdo, $table), true);
+}
+
+function insertFiltered($pdo, $table, array $row) {
+    $allowed = tableColumns($pdo, $table);
+    $use = [];
+    foreach ($row as $k => $v) {
+        if (in_array(strtolower($k), $allowed, true)) $use[$k] = $v;
+    }
+    if (!$use) return false;
+    $names = array_keys($use);
+    $ph = [];
+    $params = [];
+    foreach ($names as $i => $n) {
+        $p = ':c' . $i;
+        $ph[] = $p;
+        $params[$p] = $use[$n];
+    }
+    $sql = 'INSERT INTO ' . $table . ' (' . implode(', ', $names) . ') VALUES (' . implode(', ', $ph) . ')';
+    $st = $pdo->prepare($sql);
+    $st->execute($params);
+    return true;
+}
+
 // Deteksi tabel & kolom jadwal dokter — dibuat toleran agar jalan di berbagai
 // instalasi SIMRS:
 //   • Nama tabel: banyak kandidat (override via env RSUD_JADWAL_TABLE)
@@ -1024,40 +1061,58 @@ switch ($action) {
             }
         }
 
-        // No struk: S + 9 digit urut
-        $maxStruk = $pdo->query("SELECT COALESCE(MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 0) AS m
-                                 FROM strukpelayanan_t
-                                 WHERE nostruk LIKE 'S%' AND LENGTH(nostruk) > 1
-                                   AND SUBSTRING(nostruk FROM 2) ~ '^[0-9]+$'")->fetch();
-        $noStruk = 'S' . str_pad(((int)($maxStruk['m'] ?? 0)) + 1, 9, '0', STR_PAD_LEFT);
+        // Tagihan registrasi: insert HANYA kolom yang ada di skema (pelayananpasien_t
+        // tidak punya ischeckin — jangan pernah ikutkan). Gagal tagihan tidak membatalkan antrian.
+        $noStruk = null;
+        $now = date('Y-m-d H:i:s');
+        try {
+            $maxStruk = $pdo->query("SELECT COALESCE(MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 0) AS m
+                                     FROM strukpelayanan_t
+                                     WHERE nostruk LIKE 'S%' AND LENGTH(nostruk) > 1
+                                       AND SUBSTRING(nostruk FROM 2) ~ '^[0-9]+$'")->fetch();
+            $noStruk = 'S' . str_pad(((int)($maxStruk['m'] ?? 0)) + 1, 9, '0', STR_PAD_LEFT);
+            insertFiltered($pdo, 'strukpelayanan_t', [
+                'norec'                     => genUuid(),
+                'kdprofile'                 => 1,
+                'statusenabled'             => true,
+                'noregistrasifk'            => $reg['norec'],
+                'noregistrasi'              => $noreg,
+                'tglstruk'                  => $now,
+                'totalharusdibayar'         => BIAYA_REGISTRASI,
+                'nostruk'                   => $noStruk,
+                'objectkelompoktransaksifk' => KELOMPOK_TRANSAKSI_STRUK,
+                'created_at'                => $now,
+            ]);
+            insertFiltered($pdo, 'pelayananpasien_t', [
+                'norec'               => genUuid(),
+                'kdprofile'           => 1,
+                'statusenabled'       => true,
+                'noregistrasifk'      => $reg['norec'],
+                'noregistrasi'        => $noreg,
+                'tglregistrasi'       => $now,
+                'tglpelayanan'        => $now,
+                'produkfk'            => PRODUK_BIAYA_REGISTRASI,
+                'jumlah'              => 1,
+                'hargasatuan'         => BIAYA_REGISTRASI,
+                'hargajual'           => BIAYA_REGISTRASI,
+                'harganetto'          => BIAYA_REGISTRASI,
+                'kelasfk'             => KELAS_FK,
+                'kdkelompoktransaksi' => (string)KELOMPOK_TRANSAKSI_STRUK,
+                'keteranganlain'      => 'BIAYA REGISTRASI CHECKIN',
+                'stock'               => 0,
+                'jasa'                => 0,
+                'dpjp'                => $dokterId,
+                'created_at'          => $now,
+                // sengaja TIDAK ada 'ischeckin'
+            ]);
+        } catch (Exception $billEx) {
+            error_log('Check-in tagihan dilewati: ' . $billEx->getMessage());
+            $noStruk = $noStruk ?: null;
+        }
 
-        $stStruk = $pdo->prepare("INSERT INTO strukpelayanan_t (
-                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
-                tglstruk, totalharusdibayar, nostruk, objectkelompoktransaksifk, created_at
-            ) VALUES (:norec, 1, true, :noregfk, :noregistrasi, NOW(), " . BIAYA_REGISTRASI . ", :nostruk, "
-                . KELOMPOK_TRANSAKSI_STRUK . ", NOW())");
-        $stStruk->execute([':norec' => genUuid(), ':noregfk' => $reg['norec'], ':noregistrasi' => $noreg, ':nostruk' => $noStruk]);
-
-        // pelayananpasien_t TIDAK punya kolom ischeckin — ikuti skema rsud_mobile.txt
-        $stPel = $pdo->prepare("INSERT INTO pelayananpasien_t (
-                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
-                tglregistrasi, tglpelayanan, produkfk, jumlah, hargasatuan,
-                hargajual, harganetto, kelasfk, kdkelompoktransaksi,
-                keteranganlain, stock, jasa, dpjp, created_at
-            ) VALUES (
-                :norec, 1, true, :noregfk, :noregistrasi,
-                NOW(), NOW(), " . PRODUK_BIAYA_REGISTRASI . ", 1, " . BIAYA_REGISTRASI . ",
-                " . BIAYA_REGISTRASI . ", " . BIAYA_REGISTRASI . ", " . KELAS_FK . ", '" . KELOMPOK_TRANSAKSI_STRUK . "',
-                'BIAYA REGISTRASI CHECKIN', 0, 0, :dpjp, NOW()
-            )");
-        $stPel->execute([
-            ':norec'        => genUuid(),
-            ':noregfk'      => $reg['norec'],
-            ':noregistrasi' => $noreg,
-            ':dpjp'         => $dokterId,
-        ]);
-
-        $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :n")->execute([':n' => $reg['norec']]);
+        if (tableHasColumn($pdo, 'pasiendaftar_t', 'ischeckin')) {
+            $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :n")->execute([':n' => $reg['norec']]);
+        }
         $pdo->commit();
         respond(['success' => true,
                  'message' => 'Check-in berhasil! Tagihan registrasi Rp ' . number_format(BIAYA_REGISTRASI, 0, ',', '.') . ' telah ditambahkan.',
