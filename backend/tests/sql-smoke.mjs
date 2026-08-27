@@ -72,9 +72,9 @@ CREATE TABLE strukorder_t (norec text PRIMARY KEY, kdprofile int, statusenabled 
   tglorder timestamp, keteranganorder text, statusorder int, noregistrasi text, norec_apd text,
   objectruangantujuanfk int, objectruanganfk int, objectpegawaiorderfk int, noregistrasifk text);
 CREATE TABLE pelayananpasien_t (norec text PRIMARY KEY, kdprofile int, statusenabled bool,
-  noregistrasifk text, noregistrasi text, tglregistrasi timestamp, produkfk int, strukorderfk text,
+  noregistrasifk text, noregistrasi text, tglregistrasi timestamp, tglpelayanan timestamp, produkfk int, strukorderfk text,
   jumlah int, hargasatuan numeric, hargajual numeric, harganetto numeric, kelasfk int,
-  kdkelompoktransaksi int, keteranganlain text, ischeckin bool, created_at timestamp);
+  kdkelompoktransaksi text, keteranganlain text, stock int, jasa numeric, dpjp int, created_at timestamp);
 CREATE TABLE produk_m (id int PRIMARY KEY, namaproduk text);
 CREATE TABLE hasilradiologi_t (norec text PRIMARY KEY, statusenabled bool, pelayananpasienfk text,
   keterangan text, pegawaifk int);
@@ -330,9 +330,15 @@ console.log('\n═══ h) CHECK-IN (barcode umum harian) ═══');
   const barcode = 'CHECKIN-RSUD-MALANGBONG-' + new Date().toISOString().slice(0, 10).replaceAll('-', '');
   const patOk = /^CHECKIN-RSUD-MALANGBONG-\d{8}$/.test(barcode);
   ok(patOk, 'format barcode valid');
-  const st = await q(`SELECT pd.norec, pd.statusenabled, pd.tglpulang, pd.ischeckin, ap.norec AS norec_apd, ap.statusantrian
+  const st = await q(`SELECT pd.norec, pd.statusenabled, pd.tglpulang, pd.ischeckin,
+      pd.objectruanganlastfk, pd.objectpegawaifk, pd.tglregistrasi,
+      ap.norec AS norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
     FROM pasiendaftar_t pd
-    LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi AND COALESCE(ap.statusenabled, true) = true
+    LEFT JOIN LATERAL (
+      SELECT norec, statusantrian, noantrian, prefixnoantrian FROM antrianpasiendiperiksa_t
+      WHERE noregistrasi = pd.noregistrasi AND COALESCE(statusenabled, true) = true
+      ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC LIMIT 1
+    ) ap ON true
     WHERE pd.noregistrasi = $1 AND pd.nocmfk = $2 LIMIT 1 FOR UPDATE OF pd`, [globalThis.noReg2, pasienBaruId]);
   const reg = st.rows[0];
   ok(reg.statusenabled && !reg.tglpulang && !reg.ischeckin, 'reg layak check-in');
@@ -342,13 +348,16 @@ console.log('\n═══ h) CHECK-IN (barcode umum harian) ═══');
   await q(`INSERT INTO strukpelayanan_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,tglstruk,
       totalharusdibayar,nostruk,objectkelompoktransaksifk,created_at)
     VALUES ($1,1,true,$2,$3,NOW(),75000,$4,2,NOW())`, ['norec-struk', reg.norec, globalThis.noReg2, noStruk]);
-  await q(`INSERT INTO pelayananpasien_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,tglregistrasi,
-      produkfk,jumlah,hargasatuan,hargajual,harganetto,kelasfk,kdkelompoktransaksi,keteranganlain,ischeckin,created_at)
-    VALUES ($1,1,true,$2,$3,NOW(),6164,1,75000,75000,75000,6,2,'BIAYA REGISTRASI CHECKIN',true,NOW())`,
-    ['norec-pel', reg.norec, globalThis.noReg2]);
+  // pelayananpasien_t tidak punya kolom ischeckin (skema rsud_mobile.txt)
+  await q(`INSERT INTO pelayananpasien_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,
+      tglregistrasi,tglpelayanan,produkfk,jumlah,hargasatuan,hargajual,harganetto,kelasfk,
+      kdkelompoktransaksi,keteranganlain,stock,jasa,dpjp,created_at)
+    VALUES ($1,1,true,$2,$3,NOW(),NOW(),6164,1,75000,75000,75000,6,'2','BIAYA REGISTRASI CHECKIN',0,0,$4,NOW())`,
+    ['norec-pel', reg.norec, globalThis.noReg2, 500]);
   await q(`UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = $1`, [reg.norec]);
   await q(`UPDATE antrianpasiendiperiksa_t SET statusantrian = '1' WHERE norec = $1`, [reg.norec_apd]);
   ok(true, `check-in tersimpan (struk ${noStruk})`);
+  ok(!!reg.norec_apd, 'antrian existing di-update (bukan insert ulang)');
 
   // coba check-in lagi → harus terdeteksi
   const lagi = await q(`SELECT ischeckin FROM pasiendaftar_t WHERE norec = $1`, [reg.norec]);
@@ -357,6 +366,39 @@ console.log('\n═══ h) CHECK-IN (barcode umum harian) ═══');
   // cancel setelah check-in → harus terdeteksi
   const cek2 = await q(`SELECT pd.tglpulang, pd.ischeckin FROM pasiendaftar_t pd WHERE pd.noregistrasi = $1`, [globalThis.noReg2]);
   ok(cek2.rows[0].ischeckin === true, 'cancel setelah check-in terblokir');
+
+  // Check-in tanpa antrian → INSERT antrianpasiendiperiksa_t (alur checkin_barcode rsud_mobile.txt)
+  const noReg3 = 'REGCHK0001';
+  await q(`INSERT INTO pasiendaftar_t (norec,kdprofile,statusenabled,noregistrasi,nocmfk,tglregistrasi,
+      objectruanganlastfk,objectpegawaifk,objectkelompokpasienlastfk,objectkelasfk,statuspasien,created_at,ischeckin)
+    VALUES ('norec-r3',1,true,$1,'1',NOW(),100,500,1,6,'Pasien Lama',NOW(),false)`, [noReg3]);
+  const st3 = await q(`SELECT pd.norec, pd.objectruanganlastfk, pd.objectpegawaifk, ap.norec AS norec_apd
+    FROM pasiendaftar_t pd
+    LEFT JOIN LATERAL (
+      SELECT norec FROM antrianpasiendiperiksa_t
+      WHERE noregistrasi = pd.noregistrasi AND COALESCE(statusenabled, true) = true
+      ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC LIMIT 1
+    ) ap ON true
+    WHERE pd.noregistrasi = $1 LIMIT 1`, [noReg3]);
+  ok(!st3.rows[0].norec_apd, 'registrasi tanpa antrian sebelum check-in');
+  const used3 = await q(`SELECT COUNT(*) AS c FROM antrianpasiendiperiksa_t a
+    JOIN pasiendaftar_t pd2 ON pd2.noregistrasi = a.noregistrasi AND pd2.statusenabled = true
+    WHERE a.statusenabled = true AND a.objectruanganfk = $1 AND DATE(a.tglregistrasi) = CURRENT_DATE`, [100]);
+  const noAntrian3 = used3.rows[0].c + 1;
+  await q(`INSERT INTO antrianpasiendiperiksa_t (
+      norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+      objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk,
+      noantrian, prefixnoantrian, tglregistrasi, statusantrian, created_at)
+    VALUES ('norec-a3',1,true,$1,$2,100,500,6,6,$3,'A',NOW(),'1',NOW())`,
+    [st3.rows[0].norec, noReg3, noAntrian3]);
+  await q(`INSERT INTO pelayananpasien_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,
+      tglregistrasi,tglpelayanan,produkfk,jumlah,hargasatuan,hargajual,harganetto,kelasfk,
+      kdkelompoktransaksi,keteranganlain,stock,jasa,dpjp,created_at)
+    VALUES ('norec-pel3',1,true,$1,$2,NOW(),NOW(),6164,1,75000,75000,75000,6,'2','BIAYA REGISTRASI CHECKIN',0,0,500,NOW())`,
+    [st3.rows[0].norec, noReg3]);
+  await q(`UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = $1`, [st3.rows[0].norec]);
+  const apd3 = await q(`SELECT noantrian, prefixnoantrian, statusantrian FROM antrianpasiendiperiksa_t WHERE norec = 'norec-a3'`);
+  ok(apd3.rows.length === 1 && apd3.rows[0].statusantrian === '1', 'check-in INSERT ke antrianpasiendiperiksa_t jika belum ada');
 }
 
 console.log('\n═══ i) RIWAYAT AKHIR (3 item: Dibatalkan + Aktif/Checkin) ═══');

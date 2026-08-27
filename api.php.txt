@@ -948,10 +948,12 @@ switch ($action) {
 
         $pdo->beginTransaction();
         $st = $pdo->prepare("SELECT pd.norec, pd.noregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
-                                    ap.norec AS norec_apd, ap.statusantrian
+                                    pd.objectruanganlastfk, pd.objectpegawaifk, pd.tglregistrasi,
+                                    ap.norec AS norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
                              FROM pasiendaftar_t pd
                              LEFT JOIN LATERAL (
-                                 SELECT norec, statusantrian FROM antrianpasiendiperiksa_t
+                                 SELECT norec, statusantrian, noantrian, prefixnoantrian
+                                 FROM antrianpasiendiperiksa_t
                                  WHERE noregistrasi = pd.noregistrasi AND COALESCE(statusenabled, true) = true
                                  ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
                                  LIMIT 1
@@ -964,6 +966,63 @@ switch ($action) {
         if (!empty($reg['tglpulang']))         { $pdo->rollBack(); respond(['error' => 'Kunjungan sudah selesai'], 400); }
         if ($reg['statusantrian'] == 2)        { $pdo->rollBack(); respond(['error' => 'Kunjungan sudah selesai pemeriksaan'], 400); }
         if ($reg['ischeckin'])                 { $pdo->rollBack(); respond(['error' => 'Check-in sudah dilakukan sebelumnya'], 400); }
+
+        // Antrian: insert ke antrianpasiendiperiksa_t bila belum ada (alur checkin_barcode di rsud_mobile.txt).
+        // Bila sudah ada (dari daftar_online), cukup update statusantrian.
+        $apdNorec      = $reg['norec_apd'] ?? null;
+        $ruanganId     = $reg['objectruanganlastfk'] ?? null;
+        $dokterId      = $reg['objectpegawaifk'] ?? null;
+        $tglReg        = !empty($reg['tglregistrasi']) ? date('Y-m-d', strtotime($reg['tglregistrasi'])) : date('Y-m-d');
+        $noAntrianFull = null;
+
+        if (empty($apdNorec)) {
+            if (empty($ruanganId)) {
+                $pdo->rollBack();
+                respond(['error' => 'Data poliklinik pada registrasi tidak ditemukan, tidak dapat membuat antrian'], 400);
+            }
+            $pdo->exec("SELECT pg_advisory_xact_lock(hashtext('antrian|" . intval($ruanganId) . "|" . $tglReg . "'))");
+
+            $ruanganSt = $pdo->prepare("SELECT namaruangan, prefixnoantrian FROM ruangan_m WHERE id = :id");
+            $ruanganSt->execute([':id' => $ruanganId]);
+            $ruanganInfo   = $ruanganSt->fetch();
+            $prefixAntrian = !empty($ruanganInfo['prefixnoantrian']) ? trim($ruanganInfo['prefixnoantrian']) : 'A';
+
+            $usedSt = $pdo->prepare("SELECT COUNT(*) AS c
+                                     FROM antrianpasiendiperiksa_t a
+                                     JOIN pasiendaftar_t pd2 ON pd2.noregistrasi = a.noregistrasi AND pd2.statusenabled = true
+                                     WHERE a.statusenabled = true AND a.objectruanganfk = :ru
+                                       AND DATE(a.tglregistrasi) = :tgl");
+            $usedSt->execute([':ru' => $ruanganId, ':tgl' => $tglReg]);
+            $noAntrian = ((int)$usedSt->fetch()['c']) + 1;
+
+            $apdNorec = genUuid();
+            $stApd = $pdo->prepare("INSERT INTO antrianpasiendiperiksa_t (
+                        norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+                        objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk,
+                        noantrian, prefixnoantrian, tglregistrasi, statusantrian, created_at
+                    ) VALUES (
+                        :norec, 1, true, :noreg_fk, :noregistrasi,
+                        :ruangan, :dokter, " . KELAS_FK . ", " . KELAS_FK . ",
+                        :noantrian, :prefix, NOW(), '1', NOW()
+                    )");
+            $stApd->execute([
+                ':norec'         => $apdNorec,
+                ':noreg_fk'      => $reg['norec'],
+                ':noregistrasi'  => $noreg,
+                ':ruangan'       => $ruanganId,
+                ':dokter'        => $dokterId,
+                ':noantrian'     => $noAntrian,
+                ':prefix'        => $prefixAntrian,
+            ]);
+            $noAntrianFull = $prefixAntrian . '-' . str_pad((string)$noAntrian, 3, '0', STR_PAD_LEFT);
+        } else {
+            $pdo->prepare("UPDATE antrianpasiendiperiksa_t SET statusantrian = '1' WHERE norec = :n")
+                ->execute([':n' => $apdNorec]);
+            if ($reg['noantrian'] !== null && $reg['noantrian'] !== '') {
+                $pfx = !empty($reg['prefixnoantrian']) ? $reg['prefixnoantrian'] : 'A';
+                $noAntrianFull = $pfx . '-' . str_pad((string)$reg['noantrian'], 3, '0', STR_PAD_LEFT);
+            }
+        }
 
         // No struk: S + 9 digit urut
         $maxStruk = $pdo->query("SELECT COALESCE(MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 0) AS m
@@ -979,24 +1038,36 @@ switch ($action) {
                 . KELOMPOK_TRANSAKSI_STRUK . ", NOW())");
         $stStruk->execute([':norec' => genUuid(), ':noregfk' => $reg['norec'], ':noregistrasi' => $noreg, ':nostruk' => $noStruk]);
 
+        // pelayananpasien_t TIDAK punya kolom ischeckin — ikuti skema rsud_mobile.txt
         $stPel = $pdo->prepare("INSERT INTO pelayananpasien_t (
-                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi, tglregistrasi,
-                produkfk, jumlah, hargasatuan, hargajual, harganetto, kelasfk,
-                kdkelompoktransaksi, keteranganlain, ischeckin, created_at
-            ) VALUES (:norec, 1, true, :noregfk, :noregistrasi, NOW(), " . PRODUK_BIAYA_REGISTRASI . ",
-                1, " . BIAYA_REGISTRASI . ", " . BIAYA_REGISTRASI . ", " . BIAYA_REGISTRASI . ", " . KELAS_FK . ",
-                " . KELOMPOK_TRANSAKSI_STRUK . ", 'BIAYA REGISTRASI CHECKIN', true, NOW())");
-        $stPel->execute([':norec' => genUuid(), ':noregfk' => $reg['norec'], ':noregistrasi' => $noreg]);
+                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+                tglregistrasi, tglpelayanan, produkfk, jumlah, hargasatuan,
+                hargajual, harganetto, kelasfk, kdkelompoktransaksi,
+                keteranganlain, stock, jasa, dpjp, created_at
+            ) VALUES (
+                :norec, 1, true, :noregfk, :noregistrasi,
+                NOW(), NOW(), " . PRODUK_BIAYA_REGISTRASI . ", 1, " . BIAYA_REGISTRASI . ",
+                " . BIAYA_REGISTRASI . ", " . BIAYA_REGISTRASI . ", " . KELAS_FK . ", '" . KELOMPOK_TRANSAKSI_STRUK . "',
+                'BIAYA REGISTRASI CHECKIN', 0, 0, :dpjp, NOW()
+            )");
+        $stPel->execute([
+            ':norec'        => genUuid(),
+            ':noregfk'      => $reg['norec'],
+            ':noregistrasi' => $noreg,
+            ':dpjp'         => $dokterId,
+        ]);
 
         $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :n")->execute([':n' => $reg['norec']]);
-        if (!empty($reg['norec_apd'])) {
-            $pdo->prepare("UPDATE antrianpasiendiperiksa_t SET statusantrian = '1' WHERE norec = :n")
-                ->execute([':n' => $reg['norec_apd']]);
-        }
         $pdo->commit();
         respond(['success' => true,
                  'message' => 'Check-in berhasil! Tagihan registrasi Rp ' . number_format(BIAYA_REGISTRASI, 0, ',', '.') . ' telah ditambahkan.',
-                 'data' => ['noregistrasi' => $noreg, 'nostruk' => $noStruk, 'tgl_checkin' => date('Y-m-d H:i:s')]]);
+                 'data' => [
+                     'noregistrasi' => $noreg,
+                     'nostruk'      => $noStruk,
+                     'tgl_checkin'  => date('Y-m-d H:i:s'),
+                     'noantrian'    => $noAntrianFull,
+                     'norec_apd'    => $apdNorec,
+                 ]]);
         break;
 
     // ---------- BATAL RESERVASI ----------

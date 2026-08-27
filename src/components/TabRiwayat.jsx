@@ -157,6 +157,7 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
       const json = await res.json();
 
       if (json.success) {
+        const noAntrian = json.data?.noantrian;
         await Swal.fire({
           icon: 'success',
           title: 'Check-in Berhasil!',
@@ -168,6 +169,8 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
               <p style="font-size: 15px; color: #334155; margin-bottom: 4px;">
                 Status: <strong>Telah Check-in</strong>
               </p>
+              ${noAntrian ? `<p style="font-size: 22px; font-weight: 800; color: #166534; margin: 8px 0;">${noAntrian}</p>
+              <p style="font-size: 12px; color: #64748b; margin-bottom: 4px;">Nomor Antrian</p>` : ''}
               <p style="font-size: 13px; color: #64748b;">
                 Tindakan registrasi Rp 75.000 telah ditambahkan.
               </p>
