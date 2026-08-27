@@ -306,8 +306,8 @@ switch ($action) {
             $stmtCount->execute([':ruangan' => $ruanganId]);
             $noAntrian = ($stmtCount->fetch()['total'] ?? 0) + 1;
 
-            // Insert antrian
-            $apdNorec = generateUuid();
+            // Insert antrian (apd norec diambil dari pasiendaftar_t.norec yang sudah join)
+            $apdNorec = $registrasi['norec'];
             $sqlApd = "INSERT INTO antrianpasiendiperiksa_t (
                 norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
                 objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk, noantrian, prefixnoantrian,
@@ -860,8 +860,8 @@ switch ($action) {
                 ':dokter' => $dokterId
             ]);
             
-            // ANTRIAN
-            $apdNorec = generateUuid();
+            // ANTRIAN (apd norec diambil dari pasiendaftar_t.norec yang sudah berelasi/join)
+            $apdNorec = $regNorec;
             $stmtRu = $pdo->prepare("SELECT prefixnoantrian, namaruangan FROM ruangan_m WHERE id = :id");
             $stmtRu->execute([':id' => $ruanganId]);
             $ruanganInfo = $stmtRu->fetch();

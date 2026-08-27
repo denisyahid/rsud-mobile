@@ -82,7 +82,7 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
                    pd.objectpegawaifk, pd.tglregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
                    ap.norec as norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
             FROM pasiendaftar_t pd
-            LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+            LEFT JOIN antrianpasiendiperiksa_t ap ON (ap.noregistrasi = pd.noregistrasi OR ap.norec = pd.norec OR ap.noregistrasifk = pd.norec)
                  AND COALESCE(ap.statusenabled, true) = true
             WHERE pd.noregistrasi = :noregistrasi AND pd.nocmfk = :pasien_id
             LIMIT 1
@@ -217,7 +217,8 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
             $stmtCount->execute([':ruangan' => $ruanganId, ':tgl' => $tglReg]);
             $noAntrian = ($stmtCount->fetch()['total'] ?? 0) + 1;
 
-            $apdNorec = generateUuid();
+            // apd norec diambil dari pasiendaftar_t.norec yang sudah join
+            $apdNorec = $reg['norec'];
             $sqlApd = "INSERT INTO antrianpasiendiperiksa_t (
                 norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
                 objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk, noantrian, prefixnoantrian,

@@ -314,7 +314,8 @@ function fetchJadwalRows($pdo, $tanggal, $ruanganId, $dokterId = null) {
 // karena subquery ini berada di awal (SELECT list) query pemakainya.
 function terpakaiSubquery() {
     return "(SELECT COUNT(*) FROM antrianpasiendiperiksa_t a
-             JOIN pasiendaftar_t pd2 ON pd2.noregistrasi = a.noregistrasi AND pd2.statusenabled = true
+             JOIN pasiendaftar_t pd2 ON (pd2.noregistrasi = a.noregistrasi OR pd2.norec = a.norec OR pd2.norec = a.noregistrasifk)
+               AND pd2.statusenabled = true
              WHERE a.statusenabled = true AND a.objectruanganfk = ru.id
                AND a.objectpegawaifk = pg.id AND DATE(a.tglregistrasi) = ?)";
 }
@@ -329,7 +330,8 @@ function findActiveBooking($pdo, $pasienId, $fromDate = null) {
             LEFT JOIN LATERAL (
                 SELECT ant.objectpegawaifk
                 FROM antrianpasiendiperiksa_t ant
-                WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                WHERE (ant.noregistrasi = pd.noregistrasi OR ant.norec = pd.norec OR ant.noregistrasifk = pd.norec)
+                  AND ant.statusenabled = true
                 ORDER BY (ant.objectruanganfk = pd.objectruanganlastfk) DESC
                 LIMIT 1
             ) a ON true
@@ -388,7 +390,8 @@ function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganI
     // Antrian berikutnya (hanya registrasi aktif dihitung)
     $usedSt = $pdo->prepare("SELECT COUNT(*) AS c
                              FROM antrianpasiendiperiksa_t a
-                             JOIN pasiendaftar_t pd2 ON pd2.noregistrasi = a.noregistrasi AND pd2.statusenabled = true
+                             JOIN pasiendaftar_t pd2 ON (pd2.noregistrasi = a.noregistrasi OR pd2.norec = a.norec OR pd2.norec = a.noregistrasifk)
+                               AND pd2.statusenabled = true
                              WHERE a.statusenabled = true AND a.objectruanganfk = :ru
                                AND DATE(a.tglregistrasi) = :tgl");
     $usedSt->execute([':ru' => $ruanganId, ':tgl' => $tglKunjungan]);
@@ -414,7 +417,8 @@ function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganI
         ':statuspasien'  => $statusPasien,
     ]);
 
-    $apdNorec = genUuid();
+    // apd norec diambil dari pasiendaftar_t.norec yang sudah berelasi/join
+    $apdNorec = $regNorec;
     $stApd = $pdo->prepare("INSERT INTO antrianpasiendiperiksa_t (
                 norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
                 objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk,
@@ -445,6 +449,7 @@ function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganI
         'tgl_kunjungan' => $tglKunjungan,
         'poliklinik'    => $namaRuangan,
         'dokter'        => $namaDokter,
+        'norec_apd'     => $apdNorec,
     ];
 }
 
@@ -893,7 +898,8 @@ switch ($action) {
                 LEFT JOIN LATERAL (
                     SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
                     FROM antrianpasiendiperiksa_t ant
-                    WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                    WHERE (ant.noregistrasi = pd.noregistrasi OR ant.norec = pd.norec OR ant.noregistrasifk = pd.norec)
+                      AND ant.statusenabled = true
                     ORDER BY
                         (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
                         (ant.objectpegawaifk IS NOT NULL) DESC,
@@ -944,7 +950,8 @@ switch ($action) {
                              LEFT JOIN LATERAL (
                                  SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
                                  FROM antrianpasiendiperiksa_t ant
-                                 WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+                                 WHERE (ant.noregistrasi = pd.noregistrasi OR ant.norec = pd.norec OR ant.noregistrasifk = pd.norec)
+                                   AND ant.statusenabled = true
                                  ORDER BY
                                      (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
                                      (ant.objectpegawaifk IS NOT NULL) DESC,
@@ -991,7 +998,8 @@ switch ($action) {
                              LEFT JOIN LATERAL (
                                  SELECT norec, statusantrian, noantrian, prefixnoantrian
                                  FROM antrianpasiendiperiksa_t
-                                 WHERE noregistrasi = pd.noregistrasi AND COALESCE(statusenabled, true) = true
+                                 WHERE (noregistrasi = pd.noregistrasi OR norec = pd.norec OR noregistrasifk = pd.norec)
+                                   AND COALESCE(statusenabled, true) = true
                                  ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
                                  LIMIT 1
                              ) ap ON true
@@ -1026,13 +1034,15 @@ switch ($action) {
 
             $usedSt = $pdo->prepare("SELECT COUNT(*) AS c
                                      FROM antrianpasiendiperiksa_t a
-                                     JOIN pasiendaftar_t pd2 ON pd2.noregistrasi = a.noregistrasi AND pd2.statusenabled = true
+                                     JOIN pasiendaftar_t pd2 ON (pd2.noregistrasi = a.noregistrasi OR pd2.norec = a.norec OR pd2.norec = a.noregistrasifk)
+                                       AND pd2.statusenabled = true
                                      WHERE a.statusenabled = true AND a.objectruanganfk = :ru
                                        AND DATE(a.tglregistrasi) = :tgl");
             $usedSt->execute([':ru' => $ruanganId, ':tgl' => $tglReg]);
             $noAntrian = ((int)$usedSt->fetch()['c']) + 1;
 
-            $apdNorec = genUuid();
+            // apd norec diambil dari pasiendaftar_t.norec yang sudah berelasi/join
+            $apdNorec = $reg['norec'];
             $stApd = $pdo->prepare("INSERT INTO antrianpasiendiperiksa_t (
                         norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
                         objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk,
@@ -1138,7 +1148,8 @@ switch ($action) {
                              FROM pasiendaftar_t pd
                              LEFT JOIN LATERAL (
                                  SELECT statusantrian FROM antrianpasiendiperiksa_t
-                                 WHERE noregistrasi = pd.noregistrasi AND statusenabled = true
+                                 WHERE (noregistrasi = pd.noregistrasi OR norec = pd.norec OR noregistrasifk = pd.norec)
+                                   AND statusenabled = true
                                  ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
                                  LIMIT 1
                              ) ap ON true
@@ -1154,7 +1165,8 @@ switch ($action) {
 
         $pdo->prepare("UPDATE pasiendaftar_t SET statusenabled = false WHERE norec = :n")->execute([':n' => $reg['norec']]);
         $pdo->prepare("UPDATE antrianpasiendiperiksa_t SET statusenabled = false
-                       WHERE noregistrasi = :noreg AND statusenabled = true")->execute([':noreg' => $noreg]);
+                       WHERE (noregistrasi = :noreg OR norec = :n OR noregistrasifk = :n) AND statusenabled = true")
+            ->execute([':noreg' => $noreg, ':n' => $reg['norec']]);
         $pdo->commit();
         respond(['success' => true, 'message' => "Reservasi $noreg berhasil dibatalkan."]);
         break;
