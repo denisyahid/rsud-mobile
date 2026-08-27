@@ -201,6 +201,17 @@ export default function TabDaftar({
           exists: true,
           message: `${json.data.length} dokter tersedia pada tanggal ini.`
         });
+      } else if (json.success && json.detected === false) {
+        // Konfigurasi tabel jadwal tidak dikenali di server — bukan "jadwal kosong"
+        setDokterJadwal([]);
+        setJadwalStatus({
+          exists: false,
+          message: 'Konfigurasi jadwal dokter belum tersambung di server (tabel jadwal tidak dikenali). Hubungi admin RSUD.'
+        });
+      } else if (!json.success && json.error) {
+        // Error nyata dari server (mis. tabel tidak ada / DB error)
+        setDokterJadwal([]);
+        setJadwalStatus({ exists: false, message: json.error });
       } else {
         setDokterJadwal([]);
         setJadwalStatus({

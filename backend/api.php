@@ -130,47 +130,131 @@ function genUuid() {
         mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffffffff));
 }
 
-// Deteksi tabel & kolom jadwal dokter (nama bisa berbeda antar instalasi SIMRS).
-// Bisa dipaksa lewat env RSUD_JADWAL_TABLE bila nama tabel di server berbeda.
+// Deteksi tabel & kolom jadwal dokter — dibuat toleran agar jalan di berbagai
+// instalasi SIMRS:
+//   • Nama tabel: banyak kandidat (override via env RSUD_JADWAL_TABLE)
+//   • Kolom hari: angka 1-7 (Senin-first), 0-6 (Minggu-first), atau nama hari
+//     (pencocokan case-insensitive: 'Senin'/'SENIN'/'senin')
+//   • Jadwal mingguan ATAU per-tanggal (kolom tanggal terisi → mode per-tanggal)
+//   • Kolom statusenabled boleh tidak ada (filter dilewati)
 function detectJadwal($pdo) {
     static $cached = null;
     if ($cached !== null) return $cached;
-    $candidates = ['jadwaldokter_m', 'jadwal_dokter_m', 'jadwaldokter_t', 'jadwalpraktikdokter_m', 'jadwal_dokter'];
-    if (getenv('RSUD_JADWAL_TABLE')) array_unshift($candidates, getenv('RSUD_JADWAL_TABLE'));
-    $found = null;
-    foreach ($candidates as $t) {
-        $st = $pdo->prepare("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = :t LIMIT 1");
-        $st->execute([':t' => $t]);
-        if ($st->fetch()) { $found = $t; break; }
-    }
-    if (!$found) { $cached = false; return false; }
-    $st = $pdo->prepare("SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = :t");
-    $st->execute([':t' => $found]);
-    $cols = array_column($st->fetchAll(), 'column_name');
-    $pick = function (array $names) use ($cols) {
-        foreach ($names as $n) if (in_array($n, $cols, true)) return $n;
-        return null;
-    };
-    $cached = [
-        'table'    => $found,
-        'pegawai'  => $pick(['objectpegawaifk', 'objectdokterfk', 'pegawaifk', 'dokterfk']),
-        'ruangan'  => $pick(['objectruanganfk', 'ruanganfk']),
-        'hari'     => $pick(['hari', 'hari_praktik', 'dayofweek']),
-        'jammulai' => $pick(['jammulai', 'jam_mulai']),
-        'jamakhir' => $pick(['jamakhir', 'jam_akhir']),
-        'quota'    => $pick(['quota', 'kuota', 'kapasitas', 'quotajadwal']),
+    $candidates = [
+        'jadwaldokter_m', 'jadwal_dokter_m', 'jadwaldokter_t', 'jadwalpraktikdokter_m',
+        'jadwal_dokter', 'jadwaldokter', 'jadwal', 'jadwaldokter_harian',
+        'jadwal_praktik_dokter', 'jadwaldokter_spesifik',
     ];
-    if (!$cached['pegawai'] || !$cached['ruangan']) { $cached = false; }
-    return $cached;
+    if (getenv('RSUD_JADWAL_TABLE')) array_unshift($candidates, getenv('RSUD_JADWAL_TABLE'));
+
+    $stTable = $pdo->prepare("SELECT 1 FROM information_schema.tables
+                              WHERE table_schema = current_schema() AND table_name = :t LIMIT 1");
+    $stCols  = $pdo->prepare("SELECT column_name FROM information_schema.columns
+                              WHERE table_schema = current_schema() AND table_name = :t");
+
+    foreach ($candidates as $t) {
+        $stTable->execute([':t' => $t]);
+        if (!$stTable->fetch()) continue;
+        $stCols->execute([':t' => $t]);
+        $cols = array_column($stCols->fetchAll(), 'column_name');
+        $pick = function (array $names) use ($cols) {
+            foreach ($names as $n) if (in_array($n, $cols, true)) return $n;
+            return null;
+        };
+        $pegawai = $pick(['objectpegawaifk', 'objectdokterfk', 'pegawaifk', 'dokterfk']);
+        $ruangan = $pick(['objectruanganfk', 'ruanganfk']);
+        $hari    = $pick(['hari', 'hari_praktik', 'harijadwal', 'hari_jadwal', 'dayofweek', 'day']);
+        $jammulai= $pick(['jammulai', 'jam_mulai', 'jammulaipraktik', 'jam_mulai_praktik', 'mulai']);
+        $jamakhir= $pick(['jamakhir', 'jam_akhir', 'jammakhir', 'jam_selesai', 'selesai', 'akhir']);
+        if (!$pegawai || !$ruangan || !$hari || !$jammulai || !$jamakhir) continue; // coba tabel kandidat lain
+
+        // Mode per-tanggal? (kolom tanggal ada & benar-benar terisi)
+        $tanggal = $pick(['tanggal', 'tanggaljadwal', 'tanggal_jadwal', 'tgljadwal']);
+        $modeTanggal = false;
+        if ($tanggal) {
+            $c = $pdo->query("SELECT 1 FROM $t WHERE {$tanggal} IS NOT NULL LIMIT 1")->fetch();
+            $modeTanggal = (bool)$c;
+        }
+
+        $cached = [
+            'table'        => $t,
+            'pegawai'      => $pegawai,
+            'ruangan'      => $ruangan,
+            'hari'         => $hari,
+            'jammulai'     => $jammulai,
+            'jamakhir'     => $jamakhir,
+            'quota'        => $pick(['quota', 'kuota', 'kapasitas', 'quotajadwal', 'jmlkuota']),
+            'tanggal'      => $tanggal,
+            'mode_tanggal' => $modeTanggal,
+            'punya_status' => in_array('statusenabled', $cols, true),
+        ];
+        return $cached;
+    }
+    $cached = false;
+    return false;
 }
 
 // Filter hari untuk tanggal tertentu — toleran representasi hari di DB
-// (angka 1-7 Senin-first, angka 0-6 Minggu-first, atau nama hari).
+// (angka 1-7 Senin-first, angka 0-6 Minggu-first, atau nama hari, apa pun hurufnya).
 function jadwalHariKeys($tanggal, $namaHari) {
     $ts  = strtotime($tanggal);
     $n   = (int)date('N', $ts);        // 1=Senin .. 7=Minggu
     $w   = (int)date('w', $ts);        // 0=Minggu .. 6=Sabtu
-    return array_values(array_unique([(string)$namaHari, (string)$n, (string)$w]));
+    return array_values(array_unique([
+        strtoupper($namaHari), (string)$n, (string)$w,
+    ]));
+}
+
+// Fragment WHERE filter jadwal: per-tanggal (mode_tanggal) atau per-hari-mingguan.
+// Menambahkan placeholder param ke $params sesuai urutan kemunculan di SQL.
+function jadwalFilterTanggal($jad, $tanggal, $namaHari, &$params) {
+    if (!empty($jad['mode_tanggal'])) {
+        $params[] = $tanggal;
+        return "DATE(jd.{$jad['tanggal']}) = ?";
+    }
+    $keys = jadwalHariKeys($tanggal, $namaHari);
+    $in   = implode(',', array_fill(0, count($keys), '?'));
+    foreach ($keys as $k) $params[] = $k;
+    return "UPPER(jd.{$jad['hari']}::text) IN ($in)";
+}
+
+// Filter statusenabled — dilewati bila kolom tidak ada di tabel jadwal.
+function jadwalStatusFilter($jad) {
+    return !empty($jad['punya_status']) ? "COALESCE(jd.statusenabled, true) = true" : "TRUE";
+}
+
+// Ambil baris jadwal (group per dokter) untuk tanggal + ruangan (+ dokter opsional).
+// Return [detected(bool), rows[]]. Param order: [tanggal(subquery terpakai),
+// ruanganId, (dokterId), ...param filter tanggal].
+function fetchJadwalRows($pdo, $tanggal, $ruanganId, $dokterId = null) {
+    $jad = detectJadwal($pdo);
+    if (!$jad) return [false, []];
+    $ts = strtotime($tanggal);
+    $namaHari = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'][(int)date('N', $ts) - 1];
+    $quotaExpr = $jad['quota'] ? "jd.{$jad['quota']}" : (string)DEFAULT_QUOTA;
+
+    $params = [$tanggal]; // param pertama → subquery terpakai (di SELECT list)
+    $sql = "SELECT pg.id AS dokter_id, pg.namalengkap, ru.id AS ruangan_id, ru.namaruangan,
+                   MIN(jd.{$jad['jammulai']})::text AS jammulai,
+                   MAX(jd.{$jad['jamakhir']})::text AS jamakhir,
+                   COALESCE(SUM($quotaExpr), " . DEFAULT_QUOTA . ") AS quota,
+                   " . terpakaiSubquery() . " AS terpakai
+            FROM {$jad['table']} jd
+            JOIN pegawai_m pg ON pg.id = jd.{$jad['pegawai']} AND pg.statusenabled = true
+            JOIN ruangan_m ru ON ru.id = jd.{$jad['ruangan']} AND ru.statusenabled = true
+            WHERE jd.{$jad['ruangan']} = ?";
+    $params[] = $ruanganId;
+    if ($dokterId !== null) {
+        $sql .= " AND jd.{$jad['pegawai']} = ?";
+        $params[] = $dokterId;
+    }
+    $sql .= " AND " . jadwalFilterTanggal($jad, $tanggal, $namaHari, $params);
+    $sql .= " AND " . jadwalStatusFilter($jad);
+    $sql .= " GROUP BY pg.id, pg.namalengkap, ru.id, ru.namaruangan
+              ORDER BY pg.namalengkap";
+    $st = $pdo->prepare($sql);
+    $st->execute($params);
+    return [true, $st->fetchAll()];
 }
 
 // Jumlah antrian terpakai (registrasi aktif saja — batal tidak dihitung).
@@ -205,29 +289,10 @@ function findActiveBooking($pdo, $pasienId, $fromDate = null) {
 
 // Validasi jadwal + kuota untuk (tanggal, ruangan, dokter). Return [ok, pesan, jadwalRow]
 function cekJadwalKuota($pdo, $tanggal, $ruanganId, $dokterId) {
-    $jad = detectJadwal($pdo);
-    if (!$jad) return [true, null, null]; // skema jadwal tidak dikenali → jangan blokir pendaftaran
-    $ts = strtotime($tanggal);
-    $namaHari = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'][(int)date('N', $ts) - 1];
-    $keys = implode(',', array_fill(0, count(jadwalHariKeys($tanggal, $namaHari)), '?'));
-    $quotaSel = $jad['quota'] ? "jd.{$jad['quota']}" : (string)DEFAULT_QUOTA;
-    $sql = "SELECT pg.id AS dokter_id, ru.id AS ruangan_id,
-                   MIN(jd.{$jad['jammulai']}) AS jammulai, MAX(jd.{$jad['jamakhir']}) AS jamakhir,
-                   COALESCE(SUM($quotaSel), " . DEFAULT_QUOTA . ") AS quota,
-                   " . terpakaiSubquery() . " AS terpakai
-            FROM {$jad['table']} jd
-            JOIN pegawai_m pg ON pg.id = jd.{$jad['pegawai']} AND pg.statusenabled = true
-            JOIN ruangan_m ru ON ru.id = jd.{$jad['ruangan']} AND ru.statusenabled = true
-            WHERE jd.{$jad['ruangan']} = ? AND pg.id = ?
-              AND jd.{$jad['hari']}::text IN ($keys)
-              AND COALESCE(jd.statusenabled, true) = true
-            GROUP BY pg.id, ru.id
-            LIMIT 1";
-    $params = array_merge([$tanggal, $ruanganId, $dokterId], jadwalHariKeys($tanggal, $namaHari));
-    $st = $pdo->prepare($sql);
-    $st->execute($params);
-    $row = $st->fetch();
-    if (!$row) return [false, 'Tidak ada jadwal dokter untuk tanggal & poliklinik yang dipilih.', null];
+    [$detected, $rows] = fetchJadwalRows($pdo, $tanggal, $ruanganId, $dokterId);
+    if (!$detected) return [true, null, null]; // skema jadwal tidak dikenali → jangan blokir pendaftaran
+    if (empty($rows)) return [false, 'Tidak ada jadwal dokter untuk tanggal & poliklinik yang dipilih.', null];
+    $row  = $rows[0];
     $sisa = (int)$row['quota'] - (int)$row['terpakai'];
     if ($sisa <= 0) return [false, 'Kuota dokter pada tanggal ini sudah penuh. Silakan pilih dokter/tanggal lain.', null];
     return [true, null, $row];
@@ -592,51 +657,29 @@ switch ($action) {
     // ---------- JADWAL DOKTER (per poliklinik + tanggal) ----------
     case 'get_jadwal_dokter':
         $tanggal    = validDate($_GET['tanggal'] ?? '') ? $_GET['tanggal'] : date('Y-m-d');
-        $ruanganId  = intval($_GET['ruangan_id'] ?? 0);
+        $ruanganId  = intval($_GET['ruangan_id'] ?? $_GET['poliklinik_id'] ?? $_GET['ruangan'] ?? 0);
         if (!$ruanganId) respond(['error' => 'ruangan_id wajib diisi'], 400);
 
-        $jad = detectJadwal($pdo);
-        if (!$jad) respond(['error' => 'Tabel jadwal dokter tidak ditemukan di database'], 500);
+        [$detected, $rows] = fetchJadwalRows($pdo, $tanggal, $ruanganId);
+        if (!$detected) respond(['success' => false, 'error' => 'Tabel jadwal dokter tidak ditemukan di database (set env RSUD_JADWAL_TABLE bila nama tabel berbeda)'], 500);
 
         $ts = strtotime($tanggal);
         $namaHari = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'][(int)date('N', $ts) - 1];
-        $keys = jadwalHariKeys($tanggal, $namaHari);
-        $in   = implode(',', array_fill(0, count($keys), '?'));
-        $quotaSel = $jad['quota'] ? "jd.{$jad['quota']}" : (string)DEFAULT_QUOTA;
-
-        $sql = "SELECT pg.id AS dokter_id, pg.namalengkap AS namadokter, ru.id AS ruangan_id,
-                       ru.namaruangan,
-                       MIN(jd.{$jad['jammulai']})::text   AS jammulai,
-                       MAX(jd.{$jad['jamakhir']})::text   AS jamakhir,
-                       COALESCE(SUM($quotaSel), " . DEFAULT_QUOTA . ") AS quota,
-                       " . terpakaiSubquery() . " AS terpakai
-                FROM {$jad['table']} jd
-                JOIN pegawai_m pg ON pg.id = jd.{$jad['pegawai']} AND pg.statusenabled = true
-                JOIN ruangan_m ru ON ru.id = jd.{$jad['ruangan']} AND ru.statusenabled = true
-                WHERE jd.{$jad['ruangan']} = ?
-                  AND jd.{$jad['hari']}::text IN ($in)
-                  AND COALESCE(jd.statusenabled, true) = true
-                GROUP BY pg.id, pg.namalengkap, ru.id, ru.namaruangan
-                ORDER BY pg.namalengkap";
-        $st = $pdo->prepare($sql);
-        $st->execute(array_merge([$tanggal, $ruanganId], $keys));
-        $rows = $st->fetchAll();
         $out = [];
-        foreach ($rows as $i => $r) {
+        foreach ($rows as $r) {
             $quota = (int)$r['quota'];
-            $sisa  = max(0, $quota - (int)$r['terpakai']);
             $out[] = [
                 'id'          => 'J' . $r['dokter_id'] . '-' . $r['ruangan_id'],
                 'dokter_id'   => (int)$r['dokter_id'],
                 'ruangan_id'  => (int)$r['ruangan_id'],
-                'namadokter'  => $r['namadokter'],
+                'namadokter'  => $r['namalengkap'],
                 'namaruangan' => $r['namaruangan'],
                 'jammulai'    => substr($r['jammulai'] ?? '', 0, 5),
                 'jamakhir'    => substr($r['jamakhir'] ?? '', 0, 5),
                 'hari'        => $namaHari,
                 'tanggal'     => $tanggal,
                 'quota'       => $quota,
-                'sisa_quota'  => $sisa,
+                'sisa_quota'  => max(0, $quota - (int)$r['terpakai']),
             ];
         }
         respond(['success' => true, 'tanggal' => $tanggal, 'data' => $out]);
@@ -645,37 +688,21 @@ switch ($action) {
     // ---------- DOKTER SESUAI JADWAL (untuk form pendaftaran) ----------
     case 'get_dokter_by_jadwal':
         $tanggal   = validDate($_GET['tanggal'] ?? '') ? $_GET['tanggal'] : date('Y-m-d');
-        $ruanganId = intval($_GET['ruangan_id'] ?? 0);
+        $ruanganId = intval($_GET['ruangan_id'] ?? $_GET['poliklinik_id'] ?? $_GET['ruangan'] ?? 0);
         if (!$ruanganId) respond(['error' => 'ruangan_id wajib diisi'], 400);
 
-        $jad = detectJadwal($pdo);
-        if (!$jad) respond(['success' => true, 'data' => []]); // jangan blokir form bila skema tak dikenali
-
+        [$detected, $rows] = fetchJadwalRows($pdo, $tanggal, $ruanganId);
+        if (!$detected) {
+            // Skema jadwal tidak dikenali → beri tanda agar pesan frontend jelas
+            respond(['success' => true, 'data' => [], 'detected' => false,
+                     'message' => 'Tabel jadwal dokter tidak dikenali di server']);
+        }
         $ts = strtotime($tanggal);
         $namaHari = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'][(int)date('N', $ts) - 1];
-        $keys = jadwalHariKeys($tanggal, $namaHari);
-        $in   = implode(',', array_fill(0, count($keys), '?'));
-        $quotaSel = $jad['quota'] ? "jd.{$jad['quota']}" : (string)DEFAULT_QUOTA;
-
-        $sql = "SELECT pg.id, pg.namalengkap,
-                       MIN(jd.{$jad['jammulai']})::text AS jammulai,
-                       MAX(jd.{$jad['jamakhir']})::text AS jamakhir,
-                       COALESCE(SUM($quotaSel), " . DEFAULT_QUOTA . ") AS quota,
-                       " . terpakaiSubquery() . " AS terpakai
-                FROM {$jad['table']} jd
-                JOIN pegawai_m pg ON pg.id = jd.{$jad['pegawai']} AND pg.statusenabled = true
-                JOIN ruangan_m ru ON ru.id = jd.{$jad['ruangan']} AND ru.statusenabled = true
-                WHERE jd.{$jad['ruangan']} = ?
-                  AND jd.{$jad['hari']}::text IN ($in)
-                  AND COALESCE(jd.statusenabled, true) = true
-                GROUP BY pg.id, pg.namalengkap
-                ORDER BY pg.namalengkap";
-        $st = $pdo->prepare($sql);
-        $st->execute(array_merge([$tanggal, $ruanganId], $keys));
         $out = [];
-        foreach ($st->fetchAll() as $r) {
+        foreach ($rows as $r) {
             $out[] = [
-                'id'         => (int)$r['id'], // = dokter_id (dipakai langsung frontend)
+                'id'         => (int)$r['dokter_id'], // = dokter_id (dipakai langsung frontend)
                 'namalengkap'=> $r['namalengkap'],
                 'jammulai'   => substr($r['jammulai'] ?? '', 0, 5),
                 'jamakhir'   => substr($r['jamakhir'] ?? '', 0, 5),
@@ -685,7 +712,7 @@ switch ($action) {
                 'sisa_quota' => max(0, (int)$r['quota'] - (int)$r['terpakai']),
             ];
         }
-        respond(['success' => true, 'data' => $out]);
+        respond(['success' => true, 'data' => $out, 'detected' => true]);
         break;
 
     // ---------- CEK RESERVASI AKTIF ----------
