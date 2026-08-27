@@ -80,6 +80,7 @@ export default function TabDaftar({
   const [nikStatus, setNikStatus]             = useState(null);
   const [loadingNik, setLoadingNik]           = useState(false);
   const [submitting, setSubmitting]           = useState(false);
+  const submittingRef                         = useRef(false);
   const [regResult, setRegResult]             = useState(null);
   const [errors, setErrors]                   = useState({});
   const [nikValid, setNikValid]               = useState(false);
@@ -437,11 +438,13 @@ export default function TabDaftar({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submittingRef.current || submitting) return;
     if (!validateForm()) {
       const firstError = document.querySelector('.input-error');
       if (firstError) firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       let payload;
@@ -497,6 +500,7 @@ export default function TabDaftar({
         customClass: { popup: 'rounded-2xl', confirmButton: 'px-6 py-2.5 rounded-xl font-semibold text-sm' },
       });
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

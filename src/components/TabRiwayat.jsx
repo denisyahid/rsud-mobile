@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { formatDate, API_BASE } from '../constants/api';
 import Swal from 'sweetalert2';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -346,8 +346,9 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
     </button>
   );
 
-  // Cek apakah reservasi bisa dibatalkan (tanggal >= hari ini dan belum pulang)
-  const canCancel = (tglRegistrasi, tglPulang) => {
+  // Cek apakah reservasi bisa dibatalkan (kunjungan aktif, tanggal >= hari ini dan belum pulang)
+  const canCancel = (tglRegistrasi, tglPulang, status) => {
+    if (status === 'Dibatalkan') return false; // sudah dibatalkan
     if (tglPulang) return false; // sudah selesai
     if (!tglRegistrasi) return false;
     const tgl = new Date(tglRegistrasi);
@@ -366,7 +367,19 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
     return tgl <= now;
   };
 
-  if (!data || data.length === 0) {
+  // Deduplikasi riwayat per nomor registrasi agar 1 kunjungan tidak pernah tampil ganda
+  const uniqueData = useMemo(() => {
+    if (!Array.isArray(data)) return [];
+    const seen = new Set();
+    return data.filter((item) => {
+      const key = item?.noregistrasi || item?.norec;
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [data]);
+
+  if (!uniqueData || uniqueData.length === 0) {
     return (
       <>
         <div className="card p-6 text-center text-gray-500">
@@ -381,7 +394,7 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
   return (
     <>
       <div className="space-y-3 scroll-area stagger">
-      {data.map((reg, idx) => {
+      {uniqueData.map((reg, idx) => {
         const tglMasuk = formatDate(reg.tglregistrasi);
         const tglPulang = reg.tglpulang ? formatDate(reg.tglpulang) : null;
         const status = reg.status || (reg.tglpulang ? 'Selesai' : 'Aktif');
@@ -389,13 +402,13 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
         const isCancelled = status === 'Dibatalkan';
         const isActive = status === 'Aktif';
         const isRawatJalan = reg.jenis_rawat !== 'Rawat Inap'; // tombol hanya untuk rawat jalan
-        const canCancelNow = isActive && canCancel(reg.tglregistrasi, reg.tglpulang);
+        const canCancelNow = isActive && canCancel(reg.tglregistrasi, reg.tglpulang, status);
         // Nama dokter hanya ditampilkan jika pasien belum check-in atau sudah pulang
         const showDokter = reg.namadokter && (!isCheckin || !!reg.tglpulang);
         // Tombol check-in: kunjungan aktif, rawat jalan, belum check-in & tanggal sudah tiba
         const canCheckin = isActive && isRawatJalan && !isCheckin && canCheckinDate(reg.tglregistrasi);
         return (
-          <div key={idx} className={`card card-order p-4 ${isCancelled ? 'opacity-70' : ''}`}>
+          <div key={reg.noregistrasi || reg.norec || idx} className={`card card-order p-4 ${isCancelled ? 'opacity-70' : ''}`}>
             <div className="flex items-start justify-between">
               <div>
                 <span className="font-medium text-gray-800">{tglMasuk}</span>
@@ -529,7 +542,7 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
             </div>
 
             <div className="flex gap-2 flex-wrap">
-              {canCancel(ticketData.tglregistrasi, null) && (
+              {canCancel(ticketData.tglregistrasi, ticketData.tglpulang, ticketData.status) && (
                 <button
                   type="button"
                   onClick={handleCancelReservation}

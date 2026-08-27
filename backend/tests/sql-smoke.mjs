@@ -207,36 +207,75 @@ let pasienBaruId, noCm, noReg1, noAntrian1;
 
 console.log('\n═══ e) TIKET & RIWAYAT (setelah daftar) ═══');
 {
+  // Simulasikan SIMRS memasukkan antrian tambahan (mis. loket admisi / triage)
+  // Ini adalah kondisi nyata di RSUD yang sebelumnya menyebabkan baris riwayat ganda.
+  await q(`INSERT INTO antrianpasiendiperiksa_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,
+      objectruanganfk,objectpegawaifk,objectkelasfk,kelasfk,noantrian,prefixnoantrian,tglregistrasi,statusantrian,created_at)
+    VALUES ($1,1,true,$2,$3,99,NULL,6,6,15,'L',$4,'0',NOW())`,
+    ['norec-extra-loket', 'norec-r1', noReg1, TGL + ' 08:50:00']);
+
   const t = await q(`SELECT pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin, p.namapasien, p.nocm,
-      ru.namaruangan AS poliklinik, pg.namalengkap AS dokter, a.noantrian, a.prefixnoantrian, a.statusantrian,
+      ru.namaruangan AS poliklinik,
+      COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS dokter,
+      a.noantrian, a.prefixnoantrian, a.statusantrian,
       CASE WHEN pd.statusenabled = false THEN 'Dibatalkan' WHEN pd.tglpulang IS NOT NULL THEN 'Selesai' ELSE 'Aktif' END AS status
     FROM pasiendaftar_t pd JOIN pasien_m p ON p.id = pd.nocmfk
     LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
-    LEFT JOIN antrianpasiendiperiksa_t a ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-    LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+    LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+    LEFT JOIN LATERAL (
+        SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
+        FROM antrianpasiendiperiksa_t ant
+        WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+        ORDER BY
+            (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
+            (ant.objectpegawaifk IS NOT NULL) DESC,
+            ant.noantrian ASC
+        LIMIT 1
+    ) a ON true
+    LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
     WHERE pd.noregistrasi = $1 AND pd.nocmfk = $2 LIMIT 1`, [noReg1, pasienBaruId]);
   ok(t.rows.length === 1 && t.rows[0].status === 'Aktif' && t.rows[0].poliklinik === 'Poliklinik Penyakit Dalam', 'get_ticket_detail OK (status Aktif)');
 
   const rw = await q(`SELECT pd.norec, pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin,
-      ru.namaruangan, pg.namalengkap AS namadokter, a.noantrian, a.prefixnoantrian,
+      ru.namaruangan,
+      COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS namadokter,
+      a.noantrian, a.prefixnoantrian,
       CASE WHEN pd.statusenabled = false THEN 'Dibatalkan' WHEN pd.tglpulang IS NOT NULL THEN 'Selesai' ELSE 'Aktif' END AS status,
       CASE WHEN d.namadepartemen ILIKE '%rawat inap%' THEN 'Rawat Inap' ELSE 'Rawat Jalan' END AS jenis_rawat
     FROM pasiendaftar_t pd
     LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
     LEFT JOIN departemen_m d ON d.id = ru.objectdepartemenfk
-    LEFT JOIN antrianpasiendiperiksa_t a ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-    LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+    LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+    LEFT JOIN LATERAL (
+        SELECT ant.noantrian, ant.prefixnoantrian, ant.statusantrian, ant.objectpegawaifk
+        FROM antrianpasiendiperiksa_t ant
+        WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+        ORDER BY
+            (ant.objectruanganfk = pd.objectruanganlastfk) DESC,
+            (ant.objectpegawaifk IS NOT NULL) DESC,
+            ant.noantrian ASC
+        LIMIT 1
+    ) a ON true
+    LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
     WHERE pd.nocmfk = $1 ORDER BY pd.tglregistrasi DESC`, [pasienBaruId]);
-  ok(rw.rows.length === 1 && rw.rows[0].status === 'Aktif' && rw.rows[0].jenis_rawat === 'Rawat Jalan' && rw.rows[0].namadokter === 'dr. Test Dokter SpPD', 'get_riwayat OK (status/jenis/dokter)');
+  ok(rw.rows.length === 1, 'get_riwayat bebas duplikasi (tepat 1 baris meski ada multiple queue di SIMRS)');
+  ok(rw.rows[0].status === 'Aktif' && rw.rows[0].jenis_rawat === 'Rawat Jalan' && rw.rows[0].namadokter === 'dr. Test Dokter SpPD', 'get_riwayat data dokter & poli akurat');
 }
 
 console.log('\n═══ f) CHECK_ACTIVE_BOOKING (deteksi double booking) ═══');
 {
-  const aktif = await q(`SELECT pd.noregistrasi, pd.tglregistrasi, ru.namaruangan, pg.namalengkap AS dokter
+  const aktif = await q(`SELECT pd.noregistrasi, pd.tglregistrasi, ru.namaruangan,
+      COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS dokter
     FROM pasiendaftar_t pd
     LEFT JOIN ruangan_m ru ON ru.id = pd.objectruanganlastfk
-    LEFT JOIN antrianpasiendiperiksa_t a ON a.noregistrasi = pd.noregistrasi AND a.statusenabled = true
-    LEFT JOIN pegawai_m pg ON pg.id = a.objectpegawaifk
+    LEFT JOIN pegawai_m pg_reg ON pg_reg.id = pd.objectpegawaifk
+    LEFT JOIN LATERAL (
+        SELECT ant.objectpegawaifk FROM antrianpasiendiperiksa_t ant
+        WHERE ant.noregistrasi = pd.noregistrasi AND ant.statusenabled = true
+        ORDER BY (ant.objectruanganfk = pd.objectruanganlastfk) DESC
+        LIMIT 1
+    ) a ON true
+    LEFT JOIN pegawai_m pg_ant ON pg_ant.id = a.objectpegawaifk
     WHERE pd.nocmfk = $1 AND pd.statusenabled = true AND pd.tglpulang IS NULL
       AND (pd.ischeckin = false OR pd.ischeckin IS NULL) AND DATE(pd.tglregistrasi) >= $2
     ORDER BY pd.tglregistrasi ASC LIMIT 1`, [pasienBaruId, TGL.slice(0, 0) || new Date().toISOString().slice(0, 10)]);
@@ -247,7 +286,12 @@ console.log('\n═══ g) CANCEL_RESERVATION lalu REBOOK (Mode B pasien lama) 
 {
   //ambil norec
   const reg = await q(`SELECT pd.norec, pd.tglpulang, pd.ischeckin, ap.statusantrian FROM pasiendaftar_t pd
-    LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+    LEFT JOIN LATERAL (
+        SELECT statusantrian FROM antrianpasiendiperiksa_t
+        WHERE noregistrasi = pd.noregistrasi AND statusenabled = true
+        ORDER BY (objectruanganfk = pd.objectruanganlastfk) DESC
+        LIMIT 1
+    ) ap ON true
     WHERE pd.noregistrasi = $1 AND pd.nocmfk = $2 LIMIT 1 FOR UPDATE OF pd`, [noReg1, pasienBaruId]);
   const r = reg.rows[0];
   await q(`UPDATE pasiendaftar_t SET statusenabled = false WHERE norec = $1`, [r.norec]);
