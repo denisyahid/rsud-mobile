@@ -78,11 +78,12 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
         
         // Cek registrasi pasien - gunakan parameter binding yang benar
         $stmt = $pdo->prepare("
-            SELECT pd.norec, pd.noregistrasi, pd.nocmfk, pd.objectruanganlastfk, 
-                   pd.tglregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
-                   ap.norec as norec_apd, ap.statusantrian
+            SELECT pd.norec, pd.noregistrasi, pd.nocmfk, pd.objectruanganlastfk,
+                   pd.objectpegawaifk, pd.tglregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
+                   ap.norec as norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
             FROM pasiendaftar_t pd
             LEFT JOIN antrianpasiendiperiksa_t ap ON ap.noregistrasi = pd.noregistrasi
+                 AND COALESCE(ap.statusenabled, true) = true
             WHERE pd.noregistrasi = :noregistrasi AND pd.nocmfk = :pasien_id
             LIMIT 1
         ");
@@ -155,17 +156,18 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
         $kelompokTransaksi = 2;
         
         $pelayananNorec = generateUuid();
+        // pelayananpasien_t tidak punya kolom ischeckin — ikuti skema rsud_mobile.txt
         $sqlPelayanan = "
             INSERT INTO pelayananpasien_t (
                 norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
-                tglregistrasi, produkfk, jumlah, hargasatuan, hargajual,
-                harganetto, kelasfk, kdkelompoktransaksi, keteranganlain,
-                ischeckin, created_at
+                tglregistrasi, tglpelayanan, produkfk, jumlah, hargasatuan,
+                hargajual, harganetto, kelasfk, kdkelompoktransaksi,
+                keteranganlain, stock, jasa, dpjp, created_at
             ) VALUES (
                 :norec, 1, true, :norec_reg, :noregistrasi,
-                NOW(), :produkfk, 1, :harga, :harga,
-                :harga, :kelas, :kelompok, 'BIAYA REGISTRASI CHECKIN',
-                true, NOW()
+                NOW(), NOW(), :produkfk, 1, :harga,
+                :harga, :harga, :kelas, :kelompok,
+                'BIAYA REGISTRASI CHECKIN', 0, 0, :dpjp, NOW()
             )
         ";
         $stmtPel = $pdo->prepare($sqlPelayanan);
@@ -176,24 +178,69 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
             ':produkfk' => $produkId,
             ':harga' => $hargaSatuan,
             ':kelas' => $kelasFk,
-            ':kelompok' => $kelompokTransaksi
+            ':kelompok' => (string)$kelompokTransaksi,
+            ':dpjp' => $reg['objectpegawaifk'] ?? null,
         ]);
         
         // ==================== UPDATE FLAG CHECK-IN ====================
         $stmtCheckinFlag = $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :norec_reg");
         $stmtCheckinFlag->execute([':norec_reg' => $reg['norec']]);
         
-        // ==================== UPDATE STATUS ANTRIAN ====================
-        if (!empty($reg['norec_apd'])) {
+        // ==================== ANTRIAN (insert bila belum ada, else update) ====================
+        $apdNorec = $reg['norec_apd'] ?? null;
+        $noAntrianFull = null;
+        $ruanganId = $reg['objectruanganlastfk'] ?? null;
+        $dokterId = $reg['objectpegawaifk'] ?? null;
+        $tglReg = !empty($reg['tglregistrasi']) ? date('Y-m-d', strtotime($reg['tglregistrasi'])) : date('Y-m-d');
+
+        if (!empty($apdNorec)) {
             $stmtApdUpdate = $pdo->prepare("
-                UPDATE antrianpasiendiperiksa_t 
-                SET statusantrian = 1 
+                UPDATE antrianpasiendiperiksa_t
+                SET statusantrian = 1
                 WHERE norec = :norec_apd
             ");
-            $stmtApdUpdate->execute([':norec_apd' => $reg['norec_apd']]);
-            error_log("Antrian updated: " . $reg['norec_apd']);
+            $stmtApdUpdate->execute([':norec_apd' => $apdNorec]);
+            error_log("Antrian updated: " . $apdNorec);
+            if ($reg['noantrian'] !== null && $reg['noantrian'] !== '') {
+                $pfx = !empty($reg['prefixnoantrian']) ? $reg['prefixnoantrian'] : 'A';
+                $noAntrianFull = $pfx . '-' . str_pad((string)$reg['noantrian'], 3, '0', STR_PAD_LEFT);
+            }
+        } elseif (!empty($ruanganId)) {
+            $stmtRu = $pdo->prepare("SELECT prefixnoantrian FROM ruangan_m WHERE id = :id");
+            $stmtRu->execute([':id' => $ruanganId]);
+            $prefixAntrian = trim($stmtRu->fetch()['prefixnoantrian'] ?? '') ?: 'A';
+
+            $stmtCount = $pdo->prepare("
+                SELECT COUNT(*) AS total FROM antrianpasiendiperiksa_t
+                WHERE objectruanganfk = :ruangan AND DATE(tglregistrasi) = :tgl AND statusenabled = true
+            ");
+            $stmtCount->execute([':ruangan' => $ruanganId, ':tgl' => $tglReg]);
+            $noAntrian = ($stmtCount->fetch()['total'] ?? 0) + 1;
+
+            $apdNorec = generateUuid();
+            $sqlApd = "INSERT INTO antrianpasiendiperiksa_t (
+                norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
+                objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk, noantrian, prefixnoantrian,
+                tglregistrasi, statusantrian, created_at
+            ) VALUES (
+                :norec, 1, true, :noreg_fk, :noregistrasi,
+                :ruangan, :dokter, 6, 6, :noantrian, :prefix,
+                NOW(), '1', NOW()
+            )";
+            $stmtApdInsert = $pdo->prepare($sqlApd);
+            $stmtApdInsert->execute([
+                ':norec' => $apdNorec,
+                ':noreg_fk' => $reg['norec'],
+                ':noregistrasi' => $noregistrasi,
+                ':ruangan' => $ruanganId,
+                ':dokter' => $dokterId,
+                ':noantrian' => $noAntrian,
+                ':prefix' => $prefixAntrian,
+            ]);
+            $noAntrianFull = $prefixAntrian . '-' . str_pad((string)$noAntrian, 3, '0', STR_PAD_LEFT);
+            error_log("Antrian inserted: $apdNorec ($noAntrianFull)");
         } else {
-            error_log("Warning: No antrian found for registration " . $noregistrasi);
+            error_log("Warning: No ruangan on registration " . $noregistrasi);
         }
         
         $pdo->commit();
