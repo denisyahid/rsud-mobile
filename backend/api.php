@@ -1020,6 +1020,16 @@ switch ($action) {
         $tglReg        = !empty($reg['tglregistrasi']) ? date('Y-m-d', strtotime($reg['tglregistrasi'])) : date('Y-m-d');
         $noAntrianFull = null;
 
+        // ==== DEBUG SEMENTARA CHECK-IN (hapus setelah masalah antrian selesai) ====
+        $checkinDebug = [
+            'norec_pd'     => $reg['norec'],          // norec pasiendaftar_t
+            'norec_apd_awal' => $apdNorec,            // norec antrian yang ditemukan LATERAL (null = belum ada)
+            'apd_branch'   => null,                   // insert / reactivate / update
+            'apd_norec'    => null,                   // norec antrian yang dipakai akhirnya
+            'apd_verified' => false,                  // hasil verifikasi SELECT setelah insert/update
+            'apd_error'    => null,
+        ];
+
         if (empty($apdNorec)) {
             if (empty($ruanganId)) {
                 $pdo->rollBack();
@@ -1043,26 +1053,70 @@ switch ($action) {
 
             // apd norec diambil dari pasiendaftar_t.norec yang sudah berelasi/join
             $apdNorec = $reg['norec'];
-            $stApd = $pdo->prepare("INSERT INTO antrianpasiendiperiksa_t (
-                        norec, kdprofile, statusenabled, noregistrasifk, noregistrasi,
-                        objectruanganfk, objectpegawaifk, objectkelasfk, kelasfk,
-                        noantrian, prefixnoantrian, tglregistrasi, statusantrian, created_at
-                    ) VALUES (
-                        :norec, 1, true, :noreg_fk, :noregistrasi,
-                        :ruangan, :dokter, " . KELAS_FK . ", " . KELAS_FK . ",
-                        :noantrian, :prefix, NOW(), '1', NOW()
-                    )");
-            $stApd->execute([
-                ':norec'         => $apdNorec,
-                ':noreg_fk'      => $reg['norec'],
-                ':noregistrasi'  => $noreg,
-                ':ruangan'       => $ruanganId,
-                ':dokter'        => $dokterId,
-                ':noantrian'     => $noAntrian,
-                ':prefix'        => $prefixAntrian,
-            ]);
+
+            // DEBUG: cek dulu apakah norec ini SUDAH ada di antrianpasiendiperiksa_t
+            // (mis. baris lama statusenabled=false → LATERAL di atas tidak menemukannya,
+            //  dan INSERT langsung akan gagal duplicate key & me-rollback semua).
+            $cekLama = $pdo->prepare("SELECT norec, statusenabled, statusantrian FROM antrianpasiendiperiksa_t WHERE norec = :n LIMIT 1");
+            $cekLama->execute([':n' => $apdNorec]);
+            if ($barisLama = $cekLama->fetch()) {
+                // Aktifkan kembali baris lama alih-alih insert (hindari duplicate key)
+                $checkinDebug['apd_branch'] = 'reactivate';
+                error_log('[CHECKIN-DEBUG] norec ' . $apdNorec . ' sudah ada (statusenabled=' . var_export($barisLama['statusenabled'], true) . ') → reactivate, bukan insert');
+                $pdo->prepare("UPDATE antrianpasiendiperiksa_t
+                               SET statusenabled = true, statusantrian = '1',
+                                   noantrian = :noantrian, prefixnoantrian = :prefix,
+                                   objectruanganfk = :ruangan, objectpegawaifk = :dokter,
+                                   noregistrasi = :noregistrasi, noregistrasifk = :noreg_fk
+                               WHERE norec = :n")
+                    ->execute([
+                        ':noantrian'    => $noAntrian,
+                        ':prefix'       => $prefixAntrian,
+                        ':ruangan'      => $ruanganId,
+                        ':dokter'       => $dokterId,
+                        ':noregistrasi' => $noreg,
+                        ':noreg_fk'     => $reg['norec'],
+                        ':n'            => $apdNorec,
+                    ]);
+            } else {
+                $checkinDebug['apd_branch'] = 'insert';
+                try {
+                    // insertFiltered = hanya kolom yang benar-benar ada di skema DB
+                    // (INSERT hardcoded lama bisa gagal total bila salah satu kolom
+                    //  seperti created_at/objectkelasfk tidak ada → rollback senyap).
+                    insertFiltered($pdo, 'antrianpasiendiperiksa_t', [
+                        'norec'           => $apdNorec,
+                        'kdprofile'       => 1,
+                        'statusenabled'   => true,
+                        'noregistrasifk'  => $reg['norec'],
+                        'noregistrasi'    => $noreg,
+                        'objectruanganfk' => $ruanganId,
+                        'objectpegawaifk' => $dokterId,
+                        'objectkelasfk'   => KELAS_FK,
+                        'kelasfk'         => KELAS_FK,
+                        'noantrian'       => $noAntrian,
+                        'prefixnoantrian' => $prefixAntrian,
+                        'tglregistrasi'   => date('Y-m-d H:i:s'),
+                        'statusantrian'   => '1',
+                        'created_at'      => date('Y-m-d H:i:s'),
+                    ]);
+                } catch (Exception $apdEx) {
+                    // JANGAN senyap: laporkan kegagalan pembuatan antrian ke user & log
+                    $checkinDebug['apd_error'] = $apdEx->getMessage();
+                    error_log('[CHECKIN-DEBUG] INSERT antrianpasiendiperiksa_t GAGAL (noreg=' . $noreg . ', norec=' . $apdNorec . '): ' . $apdEx->getMessage());
+                    $pdo->rollBack();
+                    respond(['error' => 'Check-in GAGAL: antrian tidak dapat dibuat di antrianpasiendiperiksa_t. Detail: ' . $apdEx->getMessage(),
+                             'debug' => $checkinDebug], 500);
+                }
+            }
             $noAntrianFull = $prefixAntrian . '-' . str_pad((string)$noAntrian, 3, '0', STR_PAD_LEFT);
         } else {
+            // Antrian sudah ada (dibuat saat daftar_online / oleh admisi) → cukup update status.
+            // CATATAN DEBUG: norec antrian di sini BISA BERBEDA dengan norec pasiendaftar_t —
+            // itulah sebabnya "SELECT ... WHERE norec = <norec pasiendaftar>" bisa kosong
+            // padahal antriannya ada. Cek pakai:
+            //   SELECT * FROM antrianpasiendiperiksa_t WHERE noregistrasi = '<noreg>' OR noregistrasifk = '<norec pd>';
+            $checkinDebug['apd_branch'] = 'update';
             $pdo->prepare("UPDATE antrianpasiendiperiksa_t SET statusantrian = '1' WHERE norec = :n")
                 ->execute([':n' => $apdNorec]);
             if ($reg['noantrian'] !== null && $reg['noantrian'] !== '') {
@@ -1070,6 +1124,26 @@ switch ($action) {
                 $noAntrianFull = $pfx . '-' . str_pad((string)$reg['noantrian'], 3, '0', STR_PAD_LEFT);
             }
         }
+
+        // ==== VERIFIKASI (DEBUG SEMENTARA): pastikan baris antrian BENAR-BENAR ada ====
+        // SELECT * agar tidak error bila skema DB tidak punya salah satu kolom
+        $ver = $pdo->prepare("SELECT * FROM antrianpasiendiperiksa_t WHERE norec = :n LIMIT 1");
+        $ver->execute([':n' => $apdNorec]);
+        $apdRow = $ver->fetch() ?: null;
+        $checkinDebug['apd_norec']    = $apdNorec;
+        $checkinDebug['apd_verified'] = (bool)$apdRow;
+        $checkinDebug['apd_row']      = $apdRow;
+        error_log('[CHECKIN-DEBUG] noreg=' . $noreg
+            . ' branch=' . $checkinDebug['apd_branch']
+            . ' apd_norec=' . $apdNorec
+            . ' verified=' . ($apdRow ? 'YA' : 'TIDAK'));
+        if (!$apdRow) {
+            $pdo->rollBack();
+            respond(['error' => 'Check-in DIBATALKAN: setelah insert/update, baris antrian dengan norec ' . $apdNorec
+                              . ' tetap tidak ditemukan di antrianpasiendiperiksa_t (branch=' . $checkinDebug['apd_branch'] . ').',
+                     'debug' => $checkinDebug], 500);
+        }
+        // ==== AKHIR DEBUG SEMENTARA ====
 
         // Tagihan registrasi: insert HANYA kolom yang ada di skema (pelayananpasien_t
         // tidak punya ischeckin — jangan pernah ikutkan). Gagal tagihan tidak membatalkan antrian.
@@ -1132,7 +1206,9 @@ switch ($action) {
                      'tgl_checkin'  => date('Y-m-d H:i:s'),
                      'noantrian'    => $noAntrianFull,
                      'norec_apd'    => $apdNorec,
-                 ]]);
+                 ],
+                 // DEBUG SEMENTARA: hapus properti ini setelah masalah antrian selesai
+                 'debug' => $checkinDebug]);
         break;
 
     // ---------- BATAL RESERVASI ----------

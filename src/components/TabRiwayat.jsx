@@ -156,6 +156,15 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
       });
       const json = await res.json();
 
+      // DEBUG SEMENTARA: tampilkan hasil verifikasi antrian dari backend di console
+      if (json.debug) {
+        console.log('[CHECKIN-DEBUG] branch:', json.debug.apd_branch,
+          '| norec antrian:', json.debug.apd_norec,
+          '| terverifikasi di antrianpasiendiperiksa_t:', json.debug.apd_verified,
+          '| row:', json.debug.apd_row || null,
+          '| error:', json.debug.apd_error || null);
+      }
+
       if (json.success) {
         const noAntrian = json.data?.noantrian;
         await Swal.fire({
@@ -190,6 +199,10 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
           icon: 'error',
           title: 'Check-in Gagal',
           text: json.error || 'Gagal melakukan check-in',
+          // DEBUG SEMENTARA: perlihatkan detail antrian bila backend mengirim debug
+          footer: json.debug
+            ? `<small style="color:#64748b;">DEBUG: branch=${json.debug.apd_branch || '-'} · norec=${json.debug.apd_norec || json.debug.norec_pd || '-'} · verified=${json.debug.apd_verified ? 'YA' : 'TIDAK'}${json.debug.apd_error ? ' · ' + json.debug.apd_error : ''}</small>`
+            : undefined,
           confirmButtonColor: '#dc2626',
         });
         startScanner(); // nyalakan kamera lagi untuk coba scan ulang
@@ -370,15 +383,21 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
     return tgl <= now;
   };
 
-  // Deduplikasi riwayat per nomor registrasi agar 1 kunjungan tidak pernah tampil ganda
+  // Deduplikasi riwayat per nomor registrasi agar 1 kunjungan tidak pernah tampil ganda,
+  // lalu urutkan TERBARU DI PALING ATAS (tglregistrasi paling baru dulu).
   const uniqueData = useMemo(() => {
     if (!Array.isArray(data)) return [];
     const seen = new Set();
-    return data.filter((item) => {
+    const deduped = data.filter((item) => {
       const key = item?.noregistrasi || item?.norec;
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
+    });
+    return deduped.sort((a, b) => {
+      const ta = a?.tglregistrasi ? new Date(a.tglregistrasi).getTime() : 0;
+      const tb = b?.tglregistrasi ? new Date(b.tglregistrasi).getTime() : 0;
+      return tb - ta; // descending → terbaru di atas
     });
   }, [data]);
 
@@ -428,13 +447,11 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
             </div>
             <div className="mt-1 text-sm text-gray-600 flex flex-wrap items-center gap-x-2">
               <span><i className="far fa-calendar-alt mr-1"></i> Masuk: {new Date(reg.tglregistrasi).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</span>
-              {tglPulang ? (
+              {tglPulang && (
                 <>
                   <span className="mx-1">|</span>
                   <span><i className="far fa-calendar-check mr-1"></i> Pulang: {tglPulang}</span>
                 </>
-              ) : (
-                <span className="ml-2 text-yellow-600 text-xs"><i className="fas fa-clock mr-1"></i> Masih dirawat</span>
               )}
             </div>
             {/* Status check-in */}
