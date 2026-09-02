@@ -91,6 +91,12 @@ body {
 .scroll-area::-webkit-scrollbar { width: 4px; }
 .scroll-area::-webkit-scrollbar-thumb { background: var(--m3-outline-variant); border-radius: 99px; }
 
+/* Daftar riwayat: beri ruang ekstra untuk header ringkasan di atasnya */
+.riwayat-scroll {
+  max-height: calc(100vh - 350px);
+  max-height: calc(100dvh - 350px);
+}
+
 /* ═══════════════ App Shell (bingkai hp) ═══════════════ */
 .app-shell {
   max-width: 480px;
@@ -331,6 +337,39 @@ button, a.btn-outline {
   box-shadow: 0 2px 8px rgba(56,142,60,.35);
 }
 .btn-green:hover { background: #2E7D32; }
+
+/* Aksi di kartu riwayat — chip Material ala Android */
+.riwayat-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 108px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 13px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .1px;
+  cursor: pointer;
+  transition: transform .15s cubic-bezier(.2,.8,.2,1), background .2s, box-shadow .2s, opacity .2s;
+}
+.riwayat-action:active { transform: scale(.96); }
+.riwayat-action:disabled { opacity: .6; cursor: not-allowed; }
+.riwayat-action-blue { background: #E7F1FB; color: #1D4ED8; }
+.riwayat-action-blue:hover { background: #DBEAFE; }
+.riwayat-action-red { background: #FDECEC; color: #DC2626; }
+.riwayat-action-red:hover { background: #FEE2E2; }
+.riwayat-action-green {
+  background: var(--m3-primary);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(56,142,60,.28);
+}
+.riwayat-action-green:hover { background: #2E7D32; }
+@media (max-width: 400px) {
+  .riwayat-action { min-width: 92px; padding: 8px 9px; font-size: 11px; }
+}
 
 .btn-submit {
   width: 100%;

@@ -1,7 +1,165 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { formatDate, API_BASE } from '../constants/api';
+import { formatDate, formatTime, parseDateLocal, API_BASE } from '../constants/api';
 import Swal from 'sweetalert2';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+
+// ─── Helper: tanggal chip ala Android (hari + bulan singkat) ───────────────
+const getDateChip = (dateStr) => {
+  const d = parseDateLocal(dateStr);
+  if (!d) return { day: '--', month: '---' };
+  return {
+    day: String(d.getDate()).padStart(2, '0'),
+    month: d.toLocaleDateString('id-ID', { month: 'short' }).toUpperCase(),
+  };
+};
+
+// ─── Warna tema status kunjungan (Material 3 green palette) ────────────────
+const getStatusTheme = ({ isRawatJalan, isCancelled, isActive }) => {
+  if (!isRawatJalan) return { label: 'Rawat Inap', bg: '#EDE9FE', fg: '#6D28D9' };
+  if (isCancelled) return { label: 'Dibatalkan', bg: '#F3F4F6', fg: '#6B7280' };
+  if (isActive) return { label: 'Aktif', bg: '#D8F5D5', fg: '#1B5E20' };
+  return { label: 'Selesai', bg: '#E9F8E9', fg: '#2E7D32' };
+};
+
+// ─── Kartu Riwayat versi Android / Material Design 3 ───────────────────────
+const RiwayatCard = ({
+  reg,
+  isCheckin,
+  isCancelled,
+  isActive,
+  isRawatJalan,
+  canCancelNow,
+  canCheckin,
+  showDokter,
+  loadingTicket,
+  onOpenTicket,
+  onCancel,
+  onCheckin,
+}) => {
+  const tglMasuk = formatDate(reg.tglregistrasi);
+  const tglPulang = reg.tglpulang ? formatDate(reg.tglpulang) : null;
+  const jamMasuk = formatTime(reg.tglregistrasi);
+  const chip = getDateChip(reg.tglregistrasi);
+  const theme = getStatusTheme({ isRawatJalan, isCancelled, isActive });
+
+  return (
+    <div className={`card card-order overflow-hidden ${isCancelled ? 'opacity-75' : ''}`}>
+      <div className="p-4 pb-3">
+        {/* ── Baris atas: chip tanggal + status ─────────────────────────── */}
+        <div className="flex items-start gap-3">
+          <div
+            className="flex-shrink-0 w-14 h-14 rounded-2xl flex flex-col items-center justify-center shadow-sm"
+            style={{ background: theme.bg, color: theme.fg }}
+          >
+            <span className="text-[9px] font-extrabold uppercase tracking-[0.6px] leading-none">
+              {chip.month}
+            </span>
+            <span className="text-[20px] font-extrabold leading-none mt-0.5">
+              {chip.day}
+            </span>
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-start justify-between gap-2">
+              <h3 className="text-[13.5px] font-extrabold text-gray-900 leading-snug">
+                {tglMasuk}
+              </h3>
+              <span
+                className="flex-shrink-0 text-[10px] font-bold px-2.5 py-1 rounded-full"
+                style={{ background: theme.bg, color: theme.fg }}
+              >
+                {theme.label}
+              </span>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              <i className="fas fa-hashtag mr-1 text-[10px]"></i>
+              No. Registrasi <span className="font-semibold text-gray-700">{reg.noregistrasi || reg.norec || '-'}</span>
+            </p>
+          </div>
+        </div>
+
+        {/* ── Detail poli / dokter / waktu ──────────────────────────────── */}
+        <div className="mt-3 space-y-1.5 text-[12.5px]">
+          {reg.namaruangan && (
+            <div className="flex items-center gap-2 text-gray-700">
+              <span className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center"
+                style={{ background: 'var(--m3-primary-container)', color: 'var(--m3-on-primary-container)' }}>
+                <i className="fas fa-hospital-alt text-[11px]"></i>
+              </span>
+              <span className="font-semibold">{reg.namaruangan}</span>
+            </div>
+          )}
+          {showDokter && (
+            <div className="flex items-center gap-2 text-gray-600">
+              <span className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-blue-50 text-blue-600">
+                <i className="fas fa-user-md text-[11px]"></i>
+              </span>
+              <span>{reg.namadokter}</span>
+            </div>
+          )}
+          {(jamMasuk || tglPulang) && (
+            <div className="flex items-center gap-2 text-gray-500">
+              <span className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-gray-100 text-gray-500">
+                <i className="far fa-clock text-[11px]"></i>
+              </span>
+              <span>
+                {jamMasuk && (
+                  <>
+                    Jam kunjungan: <strong className="text-gray-700">{jamMasuk}</strong>
+                  </>
+                )}
+                {tglPulang && (
+                  <span className="text-gray-400">
+                    {' '}{jamMasuk ? '·' : ''} Pulang {tglPulang}
+                  </span>
+                )}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Status check-in ───────────────────────────────────────────── */}
+        {isActive && (
+          <div className="mt-3">
+            <span
+              className={`inline-flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                isCheckin ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+              }`}
+            >
+              <i className={`fas ${isCheckin ? 'fa-check-circle' : 'fa-hourglass-half'} text-[10px]`}></i>
+              {isCheckin ? 'Telah Check-in' : 'Belum Check-in'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Aksi ─────────────────────────────────────────────────────────── */}
+      {(isRawatJalan && isActive) || canCancelNow || canCheckin ? (
+        <div className="px-3 pb-3 pt-0 flex gap-2 flex-wrap">
+          {isRawatJalan && isActive && (
+            <button
+              onClick={onOpenTicket}
+              disabled={loadingTicket}
+              className="riwayat-action riwayat-action-blue"
+            >
+              <i className="fas fa-ticket-alt"></i> Lihat Bukti
+            </button>
+          )}
+          {canCancelNow && (
+            <button onClick={onCancel} className="riwayat-action riwayat-action-red">
+              <i className="fas fa-times"></i> Batalkan
+            </button>
+          )}
+          {canCheckin && (
+            <button onClick={onCheckin} className="riwayat-action riwayat-action-green">
+              <i className="fas fa-qrcode"></i> Check-in
+            </button>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+};
 
 export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh }) {
   const [loadingTicket, setLoadingTicket] = useState(false);
@@ -367,16 +525,18 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
     if (status === 'Dibatalkan') return false; // sudah dibatalkan
     if (tglPulang) return false; // sudah selesai
     if (!tglRegistrasi) return false;
-    const tgl = new Date(tglRegistrasi);
+    const tgl = parseDateLocal(tglRegistrasi);
+    if (!tgl) return false;
     const now = new Date();
     now.setHours(0, 0, 0, 0);
+    tgl.setHours(0, 0, 0, 0);
     return tgl >= now;
   };
 
   // Tanggal pelayanan sudah tiba (hari ini atau sudah lewat) → bisa check-in
   const canCheckinDate = (tglRegistrasi) => {
-    if (!tglRegistrasi) return false;
-    const tgl = new Date(tglRegistrasi);
+    const tgl = parseDateLocal(tglRegistrasi);
+    if (!tgl) return false;
     tgl.setHours(0, 0, 0, 0);
     const now = new Date();
     now.setHours(0, 0, 0, 0);
@@ -395,8 +555,8 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
       return true;
     });
     return deduped.sort((a, b) => {
-      const ta = a?.tglregistrasi ? new Date(a.tglregistrasi).getTime() : 0;
-      const tb = b?.tglregistrasi ? new Date(b.tglregistrasi).getTime() : 0;
+      const ta = parseDateLocal(a?.tglregistrasi)?.getTime() || 0;
+      const tb = parseDateLocal(b?.tglregistrasi)?.getTime() || 0;
       return tb - ta; // descending → terbaru di atas
     });
   }, [data]);
@@ -404,112 +564,92 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
   if (!uniqueData || uniqueData.length === 0) {
     return (
       <>
-        <div className="card p-6 text-center text-gray-500">
-          <i className="fas fa-history text-3xl text-gray-300 mb-2"></i>
-          <p className="text-sm">Belum ada riwayat kunjungan.</p>
+        <div className="card p-8 text-center anim-fade-up">
+          <div
+            className="w-20 h-20 mx-auto rounded-3xl flex items-center justify-center"
+            style={{ background: 'var(--m3-primary-container)', color: 'var(--m3-on-primary-container)' }}
+          >
+            <i className="fas fa-history text-3xl"></i>
+          </div>
+          <h3 className="mt-4 text-base font-extrabold text-gray-800">Belum Ada Riwayat Kunjungan</h3>
+          <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+            Kunjungan yang sudah Anda lakukan atau yang sedang aktif akan muncul di sini.
+          </p>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="mt-4 inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-green-700 hover:bg-green-800 text-white text-xs font-bold rounded-xl transition"
+          >
+            <i className={`fas ${refreshing ? 'fa-spinner fa-spin' : 'fa-sync-alt'}`}></i>
+            Muat Ulang
+          </button>
         </div>
         {fabRefresh}
       </>
     );
   }
 
+  const activeCount = uniqueData.filter((r) => (r.status || (r.tglpulang ? 'Selesai' : 'Aktif')) === 'Aktif').length;
+
   return (
     <>
-      <div className="space-y-3 scroll-area stagger">
-      {uniqueData.map((reg, idx) => {
-        const tglMasuk = formatDate(reg.tglregistrasi);
-        const tglPulang = reg.tglpulang ? formatDate(reg.tglpulang) : null;
-        const status = reg.status || (reg.tglpulang ? 'Selesai' : 'Aktif');
-        const isCheckin = !!reg.is_checkin;
-        const isCancelled = status === 'Dibatalkan';
-        const isActive = status === 'Aktif';
-        const isRawatJalan = reg.jenis_rawat !== 'Rawat Inap'; // tombol hanya untuk rawat jalan
-        const canCancelNow = isActive && canCancel(reg.tglregistrasi, reg.tglpulang, status);
-        // Nama dokter hanya ditampilkan jika pasien belum check-in atau sudah pulang
-        const showDokter = reg.namadokter && (!isCheckin || !!reg.tglpulang);
-        // Tombol check-in: kunjungan aktif, rawat jalan, belum check-in & tanggal sudah tiba
-        const canCheckin = isActive && isRawatJalan && !isCheckin && canCheckinDate(reg.tglregistrasi);
-        return (
-          <div key={reg.noregistrasi || reg.norec || idx} className={`card card-order p-4 ${isCancelled ? 'opacity-70' : ''}`}>
-            <div className="flex items-start justify-between">
-              <div>
-                <span className="font-medium text-gray-800">{tglMasuk}</span>
-                <span className="text-xs text-gray-500 ml-2">#{reg.noregistrasi}</span>
-              </div>
-              <span className={`text-xs px-2 py-1 rounded-full ${
-                !isRawatJalan
-                  ? 'bg-purple-100 text-purple-700'
-                  : isCancelled ? 'bg-gray-200 text-gray-600'
-                  : isActive ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-500'
-              }`}>
-                {!isRawatJalan ? 'Rawat Inap' : isCancelled ? 'Dibatalkan' : isActive ? 'Aktif' : 'Selesai'}
-              </span>
-            </div>
-            <div className="mt-1 text-sm text-gray-600 flex flex-wrap items-center gap-x-2">
-              <span><i className="far fa-calendar-alt mr-1"></i> Masuk: {new Date(reg.tglregistrasi).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</span>
-              {tglPulang && (
-                <>
-                  <span className="mx-1">|</span>
-                  <span><i className="far fa-calendar-check mr-1"></i> Pulang: {tglPulang}</span>
-                </>
-              )}
-            </div>
-            {/* Status check-in */}
-            {isActive && (
-              <div className="mt-1.5">
-                <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
-                  isCheckin ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                }`}>
-                  <i className={`fas ${isCheckin ? 'fa-check-circle' : 'fa-hourglass-half'} text-[10px]`}></i>
-                  {isCheckin ? 'Telah Check-in' : 'Belum Check-in'}
-                </span>
-              </div>
+      {/* ── Header ringkasan ala Android ─────────────────────────────── */}
+      <div className="card p-4 mb-3 flex items-center gap-3 anim-fade-up">
+        <div
+          className="flex-shrink-0 w-11 h-11 rounded-2xl flex items-center justify-center"
+          style={{ background: 'var(--m3-primary-container)', color: 'var(--m3-on-primary-container)' }}
+        >
+          <i className="fas fa-history"></i>
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-[15px] font-extrabold text-gray-900 leading-tight">Riwayat Kunjungan</h2>
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            <span className="font-bold text-gray-600">{uniqueData.length}</span> kunjungan
+            {activeCount > 0 && (
+              <span className="ml-1.5">· <span className="font-bold text-green-700">{activeCount} aktif</span></span>
             )}
-            {/* Tampilkan Poli & Dokter */}
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              {reg.namaruangan && (
-                <span className="inline-flex items-center gap-1 text-green-700 font-medium">
-                  <i className="fas fa-hospital-alt text-xs"></i> {reg.namaruangan}
-                </span>
-              )}
-              {showDokter && (
-                <span className="inline-flex items-center gap-1 text-blue-700">
-                  <i className="fas fa-user-md text-xs"></i> {reg.namadokter}
-                </span>
-              )}
-            </div>
-            <div className="mt-2 flex gap-2 flex-wrap">
-              {/* Lihat Bukti hanya untuk pasien RAWAT JALAN yang masih aktif */}
-              {isRawatJalan && isActive && (
-                <button
-                  onClick={() => fetchTicketDetail(reg.noregistrasi)}
-                  disabled={loadingTicket}
-                  className="text-xs bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-1 rounded-full transition"
-                >
-                  <i className="fas fa-ticket-alt mr-1"></i> Lihat Bukti
-                </button>
-              )}
-              {isRawatJalan && canCancelNow && (
-                <button
-                  onClick={() => fetchTicketDetail(reg.noregistrasi)} // buka modal dulu, lalu di modal ada tombol batalkan
-                  className="text-xs bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1 rounded-full transition"
-                >
-                  <i className="fas fa-times mr-1"></i> Batalkan Reservasi
-                </button>
-              )}
-              {/* Tombol Check-in: scan QR Code dari loket admisi (barcode.php) */}
-              {canCheckin && (
-                <button
-                  onClick={() => handleCheckinClick(reg)}
-                  className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded-full transition shadow-sm"
-                >
-                  <i className="fas fa-qrcode mr-1"></i> Check-in
-                </button>
-              )}
-            </div>
-          </div>
-        );
-      })}
+          </p>
+        </div>
+        {refreshing && (
+          <div
+            className="flex-shrink-0 m3-spinner"
+            style={{ width: 22, height: 22, borderWidth: 3 }}
+          ></div>
+        )}
+      </div>
+
+      {/* ── Daftar riwayat ───────────────────────────────────────────── */}
+      <div className="space-y-3 scroll-area riwayat-scroll stagger">
+        {uniqueData.map((reg, idx) => {
+          const status = reg.status || (reg.tglpulang ? 'Selesai' : 'Aktif');
+          const isCheckin = !!reg.is_checkin;
+          const isCancelled = status === 'Dibatalkan';
+          const isActive = status === 'Aktif';
+          const isRawatJalan = reg.jenis_rawat !== 'Rawat Inap'; // tombol hanya untuk rawat jalan
+          const canCancelNow = isActive && canCancel(reg.tglregistrasi, reg.tglpulang, status);
+          // Nama dokter hanya ditampilkan jika pasien belum check-in atau sudah pulang
+          const showDokter = reg.namadokter && (!isCheckin || !!reg.tglpulang);
+          // Tombol check-in: kunjungan aktif, rawat jalan, belum check-in & tanggal sudah tiba
+          const canCheckin = isActive && isRawatJalan && !isCheckin && canCheckinDate(reg.tglregistrasi);
+
+          return (
+            <RiwayatCard
+              key={reg.noregistrasi || reg.norec || idx}
+              reg={reg}
+              isCheckin={isCheckin}
+              isCancelled={isCancelled}
+              isActive={isActive}
+              isRawatJalan={isRawatJalan}
+              canCancelNow={canCancelNow}
+              canCheckin={canCheckin}
+              showDokter={showDokter}
+              loadingTicket={loadingTicket}
+              onOpenTicket={() => fetchTicketDetail(reg.noregistrasi)}
+              onCancel={() => fetchTicketDetail(reg.noregistrasi)} // buka modal dulu, lalu di modal ada tombol batalkan
+              onCheckin={() => handleCheckinClick(reg)}
+            />
+          );
+        })}
       </div>
 
       {fabRefresh}
