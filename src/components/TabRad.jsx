@@ -133,12 +133,12 @@ export default function TabRad({ orders }) {
         const hasResult = !!order.norec_exper;
         return (
           <div key={idx} className="card card-order p-4">
-            <div className="flex items-start justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
                 <span className="badge-status badge-rad"><i className="fas fa-radiation mr-1"></i> Rad</span>
                 <span className="text-xs font-medium text-gray-700"><i className="far fa-calendar-alt mr-1"></i> {tgl}</span>
               </div>
-              <span className={`badge-status ${st.class}`}>{st.label}</span>
+              <span className={`badge-status ${st.class} flex-shrink-0`}>{st.label}</span>
             </div>
             <div className="mt-2 text-sm text-gray-600">
               <i className="fas fa-user-md w-5 text-gray-400"></i> Dokter: {order.dokter_order || '-'}
