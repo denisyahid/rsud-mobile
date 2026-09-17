@@ -1,4 +1,5 @@
-export const API_BASE = 'https://rsudmalangbong-altos-brainsphere-t110-f5.tail351109.ts.net/tm/rsud/api.php'; // PROD
+export const API_BASE = 'https://rsudmalangbong-altos-brainsphere-t110-f5.tail351109.ts.net/rsud-mobile/backend/api.php'; // PROD
+//export const API_BASE = 'https://rsudmalangbong-altos-brainsphere-t110-f5.tail351109.ts.net/tm/rsud/api.php'; // PROD LAMA
 //export const API_BASE = 'http://localhost/rsud-mobile/api.php'; // LOCAL DEV
 // Verifikasi format NIK sebelum cek ke database (digunakan saat daftar pasien baru)
 export const NIK_VERIFY_URL = 'https://api.glianalabs.com/v1/tools/verify-nik';

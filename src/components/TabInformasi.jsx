@@ -6,7 +6,7 @@ const INFO_URL = API_BASE.replace(/api\.php(\?.*)?$/, 'informasi.php');
 
 /**
  * Tab "Informasi" — halaman awal aplikasi.
- * Memuat /tm/rsud/informasi.php secara penuh sebagai web (iframe),
+ * Memuat informasi.php (satu folder dengan API_BASE) secara penuh sebagai web (iframe),
  * agar informasi/pengumuman dari RSUD tampil langsung di sini.
  */
 export default function TabInformasi() {
