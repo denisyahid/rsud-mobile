@@ -1,3 +1,16 @@
 node_modules/
 dist/
 
+# ── Panel admin informasi (backend/admin.php) ──────────────────────────────
+# Gambar hasil unggahan admin tidak ikut di-commit, hanya berkas pengamannya.
+backend/uploads/*
+!backend/uploads/.htaccess
+!backend/uploads/index.html
+
+# Database SQLite mode uji lokal (driver=sqlite) — tidak untuk produksi.
+backend/data/
+*.sqlite
+*.sqlite3
+
+# Berkas sementara pengujian
+backend/tests/tmp-*

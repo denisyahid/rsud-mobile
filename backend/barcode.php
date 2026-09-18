@@ -4,7 +4,8 @@
 // Satu QR yang sama untuk SEMUA pasien (dipajang di loket admisi).
 // Saat QR ini di-scan dari aplikasi RSUD Mobile (Riwayat → Check-in),
 // sistem otomatis menambahkan tindakan registrasi Rp 75.000 pada
-// kunjungan aktif pasien yang sedang check-in.
+// kunjungan aktif pasien yang sedang check-in — kecuali pasien dengan
+// penjamin ASURANSI (KAI): check-in-nya sama persis, hanya tidak ditagih.
 //
 // Nilai QR berisi tanggal hari ini sehingga barcode otomatis ganti
 // setiap hari dan tidak bisa dipakai ulang di hari berikutnya.
@@ -158,8 +159,10 @@ $jamLabel = date('H:i');
         <div class="kode"><?= htmlspecialchars($barcodeData) ?></div>
 
         <div class="info">
-            Scan QR ini akan otomatis menambahkan<br>
-            tindakan <b>REGISTRASI sebesar Rp 75.000</b>.<br>
+            Scan QR ini otomatis menambahkan tindakan<br>
+            <b>REGISTRASI sebesar Rp 75.000</b> untuk pasien <b>UMUM</b>.<br>
+            Pasien penjamin <b>ASURANSI (KAI)</b> tetap check-in seperti biasa,<br>
+            <b>tanpa tagihan registrasi</b>.<br>
             Berlaku untuk kunjungan hari ini.
         </div>
 

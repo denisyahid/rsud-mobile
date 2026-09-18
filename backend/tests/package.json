@@ -1,17 +1,26 @@
 {
   "name": "tests",
   "version": "1.0.0",
-  "description": "",
+  "description": "Pengujian backend RSUD Malangbong (PHP-WASM + SQLite/PGlite): panel admin informasi, logika penjamin KAI, dan SQL api.php",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run lint:php && npm run test:admin && npm run test:penjamin && npm run test:api && npm run lint:sql",
+    "lint:php": "node lint-all.mjs",
+    "test:admin": "node admin-smoke.mjs",
+    "lint:sql": "node sql-lint.mjs",
+    "sql:generate": "node generate-sql.mjs",
+    "test:api": "node sql-smoke.mjs",
+    "test:penjamin": "node penjamin-smoke.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",
-    "@php-wasm/node": "^3.1.51",
+    "@php-wasm/node": "^3.1.54",
+    "@php-wasm/universal": "^3.1.54",
+    "node-sql-parser": "^5.4.0",
     "php-parser": "^3.7.0"
-  }
+  },
+  "type": "module"
 }

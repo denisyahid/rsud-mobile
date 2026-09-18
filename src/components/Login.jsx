@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 
-export default function Login({ onLogin, loading, error, onRegisterClick }) {
+export default function Login({ onLogin, loading, error, onRegisterClick, onRegisterKaiClick }) {
   const [identifier, setIdentifier] = useState('');
   const [fieldError, setFieldError] = useState('');
   const [imgError, setImgError] = useState(false);
@@ -41,6 +41,10 @@ export default function Login({ onLogin, loading, error, onRegisterClick }) {
           <div class="flex items-start gap-3">
             <span class="flex-shrink-0 w-7 h-7 rounded-full bg-green-100 text-green-700 font-bold flex items-center justify-center text-xs">2</span>
             <div><strong class="block">Daftar Pasien Baru (Umum)</strong>Belum punya RM? Klik <em>Daftar Online Pasien Umum</em>, masukkan NIK untuk divalidasi, lalu lengkapi data diri &amp; pilih poliklinik.</div>
+          </div>
+          <div class="flex items-start gap-3">
+            <span class="flex-shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center text-xs">2b</span>
+            <div><strong class="block">Daftar Pasien KAI (Asuransi)</strong>Formulirnya sama dengan pasien Umum, hanya penjaminnya <em>Asuransi (KAI)</em>. Klik <em>Daftar Online Pasien KAI</em> — saat check-in <strong>tidak ada tagihan registrasi Rp 75.000</strong>.</div>
           </div>
           <div class="flex items-start gap-3">
             <span class="flex-shrink-0 w-7 h-7 rounded-full bg-green-100 text-green-700 font-bold flex items-center justify-center text-xs">3</span>
@@ -140,6 +144,10 @@ export default function Login({ onLogin, loading, error, onRegisterClick }) {
 
         <button onClick={onRegisterClick} className="login-register">
           <i className="fas fa-user-plus"></i> Daftar Online Pasien Umum
+        </button>
+
+        <button onClick={onRegisterKaiClick} className="login-kai">
+          <i className="fas fa-train"></i> Daftar Online Pasien KAI (Asuransi)
         </button>
 
         <button onClick={showPanduan} className="login-panduan">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { formatDate, formatTime, parseDateLocal, API_BASE } from '../constants/api';
+import { formatDate, formatTime, parseDateLocal, API_BASE, penjaminLabel, isPenjaminAsuransi, formatRupiah } from '../constants/api';
 import Swal from 'sweetalert2';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 
@@ -10,6 +10,23 @@ const getDateChip = (dateStr) => {
   return {
     day: String(d.getDate()).padStart(2, '0'),
     month: d.toLocaleDateString('id-ID', { month: 'short' }).toUpperCase(),
+  };
+};
+
+// ─── Info penjamin sebuah registrasi (Umum vs Asuransi/KAI) ────────────────
+// Backend mengirim penjamin, penjamin_label, biaya_registrasi & ditanggung_asuransi
+// pada get_riwayat / get_ticket_detail / checkin. Bila tidak ada (data lama),
+// dianggap Umum dengan tagihan registrasi Rp 75.000.
+const getPenjaminInfo = (reg) => {
+  const kode = reg?.penjamin || 'umum';
+  const asuransi = reg?.ditanggung_asuransi ?? isPenjaminAsuransi(kode);
+  const biaya = Number(reg?.biaya_registrasi ?? (asuransi ? 0 : 75000));
+  return {
+    kode,
+    label: reg?.penjamin_label || penjaminLabel(kode),
+    asuransi,
+    biaya,
+    teksBiaya: asuransi || biaya <= 0 ? 'Tanpa tagihan registrasi' : `Registrasi ${formatRupiah(biaya)}`,
   };
 };
 
@@ -41,6 +58,7 @@ const RiwayatCard = ({
   const jamMasuk = formatTime(reg.tglregistrasi);
   const chip = getDateChip(reg.tglregistrasi);
   const theme = getStatusTheme({ isRawatJalan, isCancelled, isActive });
+  const pj = getPenjaminInfo(reg);
 
   return (
     <div className={`card card-order overflow-hidden ${isCancelled ? 'opacity-75' : ''}`}>
@@ -97,6 +115,20 @@ const RiwayatCard = ({
               <span>{reg.namadokter}</span>
             </div>
           )}
+          <div className="flex items-center gap-2 text-gray-600">
+            <span
+              className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center"
+              style={pj.asuransi
+                ? { background: '#E3F0FC', color: '#1565C0' }
+                : { background: '#F1F3F4', color: '#5F6368' }}
+            >
+              <i className={`fas ${pj.asuransi ? 'fa-shield-alt' : 'fa-wallet'} text-[11px]`}></i>
+            </span>
+            <span>
+              Penjamin: <strong className="text-gray-700">{pj.label}</strong>
+              <span className="text-gray-400"> · {pj.teksBiaya}</span>
+            </span>
+          </div>
           {(jamMasuk || tglPulang) && (
             <div className="flex items-center gap-2 text-gray-500">
               <span className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center bg-gray-100 text-gray-500">
@@ -325,6 +357,10 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
 
       if (json.success) {
         const noAntrian = json.data?.noantrian;
+        const pjCheckin = getPenjaminInfo({ ...currentCheckinReg, ...json.data });
+        const infoTagihan = pjCheckin.asuransi || pjCheckin.biaya <= 0
+          ? `Biaya registrasi ditanggung <strong>${pjCheckin.label}</strong> — tidak ada tagihan.`
+          : `Tindakan registrasi ${formatRupiah(pjCheckin.biaya)} telah ditambahkan.`;
         await Swal.fire({
           icon: 'success',
           title: 'Check-in Berhasil!',
@@ -339,7 +375,7 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
               ${noAntrian ? `<p style="font-size: 22px; font-weight: 800; color: #166534; margin: 8px 0;">${noAntrian}</p>
               <p style="font-size: 12px; color: #64748b; margin-bottom: 4px;">Nomor Antrian</p>` : ''}
               <p style="font-size: 13px; color: #64748b;">
-                Tindakan registrasi Rp 75.000 telah ditambahkan.
+                ${infoTagihan}
               </p>
             </div>
           `,
@@ -668,7 +704,9 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
                 </div>
               </div>
               <h2 className="text-xl font-bold text-gray-800">BUKTI PENDAFTARAN KUNJUNGAN</h2>
-              <p className="text-xs text-gray-500">Pasien Rawat Jalan - Pembayaran UMUM</p>
+              <p className="text-xs text-gray-500">
+                Pasien Rawat Jalan - Pembayaran {getPenjaminInfo(ticketData).label.toUpperCase()}
+              </p>
             </div>
 
             <div className="ticket-card mb-6">
@@ -692,6 +730,18 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
                 <div className="col-span-2">
                   <span className="text-xs text-gray-400 block">Dokter Pemeriksa</span>
                   <strong className="text-gray-800">{ticketData.dokter || '-'}</strong>
+                </div>
+                <div>
+                  <span className="text-xs text-gray-400 block">Penjamin / Cara Bayar</span>
+                  <strong className="text-gray-800">{getPenjaminInfo(ticketData).label}</strong>
+                </div>
+                <div>
+                  <span className="text-xs text-gray-400 block">Biaya Registrasi</span>
+                  <strong className={getPenjaminInfo(ticketData).asuransi ? 'text-green-700' : 'text-gray-800'}>
+                    {getPenjaminInfo(ticketData).asuransi
+                      ? 'Ditanggung Asuransi'
+                      : formatRupiah(getPenjaminInfo(ticketData).biaya)}
+                  </strong>
                 </div>
               </div>
             </div>
@@ -775,10 +825,22 @@ export default function TabRiwayat({ data, ticketToShow, clearTicket, onRefresh 
               </div>
             )}
 
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mt-4">
-              <i className="fas fa-info-circle mr-1 text-amber-600"></i>
-              <strong>Perhatian:</strong> Check-in otomatis menambahkan tindakan <strong>registrasi Rp 75.000</strong> pada kunjungan ini.
-            </div>
+            {(() => {
+              const pj = getPenjaminInfo(currentCheckinReg);
+              return pj.asuransi || pj.biaya <= 0 ? (
+                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-800 mt-4">
+                  <i className="fas fa-shield-alt mr-1 text-blue-600"></i>
+                  <strong>Penjamin {pj.label}:</strong> check-in berjalan seperti biasa,{' '}
+                  <strong>tanpa tagihan registrasi</strong> pada kunjungan ini.
+                </div>
+              ) : (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mt-4">
+                  <i className="fas fa-info-circle mr-1 text-amber-600"></i>
+                  <strong>Perhatian:</strong> Check-in otomatis menambahkan tindakan{' '}
+                  <strong>registrasi {formatRupiah(pj.biaya)}</strong> pada kunjungan ini.
+                </div>
+              );
+            })()}
 
             {/* Input manual (fallback jika kamera tidak bisa dipakai) */}
             <div className="mt-4">

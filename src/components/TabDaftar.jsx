@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Swal from 'sweetalert2';
-import { API_BASE, NIK_VERIFY_URL } from '../constants/api';
+import {
+  API_BASE,
+  NIK_VERIFY_URL,
+  PENJAMIN_UMUM,
+  PENJAMIN_KAI,
+  PENJAMIN_OPTIONS,
+  penjaminLabel,
+  isPenjaminAsuransi,
+  formatRupiah,
+} from '../constants/api';
 
 // ─── Validasi lokal format NIK (fallback bila layanan verifikasi online down) ──
 // Struktur NIK: 2 digit provinsi + 2 digit kab/kota + 2 digit kecamatan +
@@ -29,7 +38,9 @@ export default function TabDaftar({
   onRegisterSuccess,
   isExisting = false,
   profile = null,
-  initialJadwal = null
+  initialJadwal = null,
+  penjamin = PENJAMIN_UMUM,
+  onPenjaminChange = null
 }) {
   const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
 
@@ -71,7 +82,8 @@ export default function TabDaftar({
     pekerjaan: '4',
     etnis: '2',
     nama_ayah: '',
-    nama_suami_istri: ''
+    nama_suami_istri: '',
+    nomor_asuransi: ''
   });
 
   const [desaSuggestions, setDesaSuggestions] = useState([]);
@@ -85,6 +97,27 @@ export default function TabDaftar({
   const [errors, setErrors]                   = useState({});
   const [nikValid, setNikValid]               = useState(false);
   const [showFullForm, setShowFullForm]       = useState(false);
+
+  // ─── Penjamin / cara bayar: UMUM (default) atau ASURANSI (KAI) ────────────
+  // Formulir identitas pasien sama persis untuk keduanya; yang berbeda hanya
+  // penjamin yang dikirim ke backend (dan tagihan registrasi saat check-in).
+  const [penjaminKode, setPenjaminKode] = useState(penjamin || PENJAMIN_UMUM);
+  useEffect(() => {
+    setPenjaminKode(penjamin || PENJAMIN_UMUM);
+  }, [penjamin]);
+
+  const pilihPenjamin = (kode) => {
+    setPenjaminKode(kode);
+    if (onPenjaminChange) onPenjaminChange(kode);
+  };
+
+  const isKai            = isPenjaminAsuransi(penjaminKode);
+  const opsiPenjamin     = PENJAMIN_OPTIONS.find(o => o.kode === penjaminKode) || PENJAMIN_OPTIONS[0];
+  const masterPenjamin   = masterData?.penjamin || [];
+  const masterKai        = masterPenjamin.find(m => m.kode === PENJAMIN_KAI) || null;
+  const kaiTersedia      = masterKai ? masterKai.tersedia !== false : true;
+  const kaiKeterangan    = masterKai?.keterangan || '';
+  const labelPenjamin    = opsiPenjamin.label;
 
   // ─── Prefill dari jadwal yang dipilih (tab Jadwal → tombol Daftar Kunjungan) ──
   // Isi apa pun yang tersedia: tanggal selalu, poli & dokter jika ada di data jadwal.
@@ -452,14 +485,19 @@ export default function TabDaftar({
         payload = {
           ruangan_id:    form.ruangan_id,
           dokter_id:     form.dokter_id,
-          tgl_kunjungan: form.tgl_kunjungan
+          tgl_kunjungan: form.tgl_kunjungan,
+          penjamin:      penjaminKode
         };
       } else {
-        payload = { ...form };
+        payload = { ...form, penjamin: penjaminKode };
         delete payload.desaQuery;
         delete payload.kecamatanName;
         delete payload.kotaName;
         delete payload.provinsiName;
+      }
+      // Nomor asuransi hanya relevan untuk penjamin asuransi
+      if (!isPenjaminAsuransi(penjaminKode) || !String(payload.nomor_asuransi || '').trim()) {
+        delete payload.nomor_asuransi;
       }
       const result = await onRegister(payload);
       if (result && result.success) {
@@ -519,7 +557,8 @@ export default function TabDaftar({
         penanggung_sama: false, nama_penanggung: '', hubungan_penanggung: '1',
         telp_penanggung: '', jenis_kelamin_penanggung: '2', alamat_penanggung: '',
         nama_ibu: '', email: '', status_perkawinan: '1', goldar: '',
-        pendidikan: '3', pekerjaan: '4', etnis: '2', nama_ayah: '', nama_suami_istri: ''
+        pendidikan: '3', pekerjaan: '4', etnis: '2', nama_ayah: '', nama_suami_istri: '',
+        nomor_asuransi: ''
       });
       setNikStatus(null);
       setNikValid(false);
@@ -533,8 +572,87 @@ export default function TabDaftar({
   };
 
   // ─── Helper: Blok jadwal (dipakai di dua tempat) ─────────────────────────
+  // ─── Helper: Blok penjamin / cara bayar (dipakai pasien baru & terdaftar) ──
+  const renderPenjaminSection = () => (
+    <div className="form-group">
+      <label>
+        Penjamin / Cara Bayar <span className="text-red-500">*</span>
+      </label>
+      <div className="penjamin-options" role="radiogroup" aria-label="Penjamin atau cara bayar">
+        {PENJAMIN_OPTIONS.map(opt => {
+          const aktif  = penjaminKode === opt.kode;
+          const master = masterPenjamin.find(m => m.kode === opt.kode);
+          const biaya  = Number(master?.biaya_registrasi ?? opt.biaya_registrasi);
+          return (
+            <button
+              key={opt.kode}
+              type="button"
+              role="radio"
+              aria-checked={aktif}
+              onClick={() => pilihPenjamin(opt.kode)}
+              className={[
+                'penjamin-option',
+                aktif ? 'penjamin-option-active' : '',
+                opt.kode === PENJAMIN_KAI ? 'penjamin-option-kai' : '',
+              ].filter(Boolean).join(' ')}
+            >
+              <span className="penjamin-option-icon">
+                <i className={`fas ${opt.icon}`}></i>
+              </span>
+              <span className="penjamin-option-text">
+                <strong>{opt.label}</strong>
+                <small>
+                  {biaya > 0
+                    ? `Registrasi ${formatRupiah(biaya)} saat check-in`
+                    : 'Tanpa tagihan registrasi saat check-in'}
+                </small>
+              </span>
+              <span className="penjamin-option-radio">
+                <i className={`fas ${aktif ? 'fa-check-circle' : 'fa-circle'}`}></i>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Keterangan penjamin terpilih */}
+      <div className={`penjamin-info ${isKai ? 'penjamin-info-kai' : ''}`}>
+        <i className={`fas ${isKai ? 'fa-shield-alt' : 'fa-info-circle'} mr-1`}></i>
+        {isKai
+          ? 'Pendaftaran ini memakai penjamin Asuransi (KAI). Saat check-in QR di loket admisi, tidak ada tagihan registrasi yang dibuat.'
+          : 'Pendaftaran ini memakai penjamin Umum. Saat check-in QR di loket admisi, tindakan registrasi Rp 75.000 otomatis ditambahkan.'}
+      </div>
+
+      {/* Peringatan bila kelompok asuransi belum ada di master SIMRS */}
+      {isKai && !kaiTersedia && (
+        <div className="input-error" style={{ marginTop: 6 }}>
+          <i className="fas fa-exclamation-triangle mr-1"></i>
+          {kaiKeterangan || 'Penjamin Asuransi (KAI) belum dikonfigurasi di SIMRS. Hubungi admisi atau pilih penjamin Umum.'}
+        </div>
+      )}
+
+      {/* Nomor kepesertaan asuransi (opsional, hanya untuk penjamin asuransi) */}
+      {isKai && (
+        <div className="form-group mt-3 mb-0">
+          <label>Nomor Kepesertaan Asuransi / KAI <span className="text-gray-400 font-normal">(opsional)</span></label>
+          <input
+            type="text"
+            name="nomor_asuransi"
+            value={form.nomor_asuransi}
+            onChange={handleChange}
+            maxLength={40}
+            placeholder="Contoh: 0123456789"
+          />
+        </div>
+      )}
+    </div>
+  );
+
   const renderJadwalSection = () => (
     <>
+      {/* Penjamin / cara bayar — UMUM (default) atau ASURANSI (KAI) */}
+      {renderPenjaminSection()}
+
       {/* Tanggal Kunjungan */}
       <div className="form-group">
         <label>
@@ -671,6 +789,12 @@ export default function TabDaftar({
     </>
   );
 
+  // ─── Info penjamin pada tiket (utamakan data dari backend) ────────────────
+  const tiketPenjamin = regResult?.penjamin || penjaminKode;
+  const tiketLabel    = regResult?.penjamin_label || penjaminLabel(tiketPenjamin);
+  const tiketAsuransi = regResult?.ditanggung_asuransi ?? isPenjaminAsuransi(tiketPenjamin);
+  const tiketBiaya    = Number(regResult?.biaya_registrasi ?? (tiketAsuransi ? 0 : 75000));
+
   // ─── Tiket hasil pendaftaran ──────────────────────────────────────────────
   if (regResult) {
     return (
@@ -689,7 +813,7 @@ export default function TabDaftar({
               ? 'BUKTI PENDAFTARAN KUNJUNGAN'
               : 'BUKTI PENDAFTARAN ONLINE PASIEN BARU'}
           </h2>
-          <p className="text-xs text-gray-500">Pasien Rawat Jalan - Pembayaran UMUM</p>
+          <p className="text-xs text-gray-500">Pasien Rawat Jalan - Pembayaran {tiketLabel.toUpperCase()}</p>
         </div>
 
         <div className="ticket-card mb-6 anim-pop">
@@ -723,12 +847,30 @@ export default function TabDaftar({
               <span className="text-xs text-gray-400 block">Dokter Pemeriksa</span>
               <strong className="text-gray-800">{regResult.dokter}</strong>
             </div>
+            <div>
+              <span className="text-xs text-gray-400 block">Penjamin / Cara Bayar</span>
+              <strong className="text-gray-800">{tiketLabel}</strong>
+            </div>
+            <div>
+              <span className="text-xs text-gray-400 block">Biaya Registrasi</span>
+              <strong className={tiketAsuransi ? 'text-green-700' : 'text-gray-800'}>
+                {tiketAsuransi ? 'Ditanggung Asuransi' : formatRupiah(tiketBiaya)}
+              </strong>
+            </div>
           </div>
         </div>
 
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 mb-6">
           <i className="fas fa-info-circle mr-1 text-amber-600"></i>
           <strong>Petunjuk Kunjungan:</strong> Harap datang 1 jam sebelum jam pelayanan poli.
+          {tiketAsuransi && (
+            <>
+              <br />
+              <i className="fas fa-shield-alt mr-1 text-amber-600"></i>
+              Penjamin <strong>{tiketLabel}</strong>: check-in lewat QR seperti biasa,{' '}
+              <strong>tanpa tagihan registrasi</strong>.
+            </>
+          )}
         </div>
 
         <div className="flex gap-2">
@@ -773,6 +915,12 @@ export default function TabDaftar({
           <p>
             <strong>Pasien:</strong> {profile?.namapasien || '-'}
             <span className="text-gray-500 ml-2">(RM: {profile?.nocm || '-'})</span>
+          </p>
+          <p className="text-xs text-gray-600 mt-1">
+            <strong>Penjamin:</strong> {labelPenjamin}
+            {isKai
+              ? ' — tidak ada tagihan registrasi saat check-in.'
+              : ' — registrasi Rp 75.000 saat check-in.'}
           </p>
         </div>
 
@@ -852,12 +1000,19 @@ export default function TabDaftar({
     <div className="card p-5">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-lg font-bold text-gray-800">Daftar Online Pasien Baru</h2>
-        <span className="bg-green-100 text-green-800 text-xs px-2.5 py-1 rounded-full font-bold">
-          PEMBAYARAN UMUM
+        <span
+          className={`text-xs px-2.5 py-1 rounded-full font-bold ${
+            isKai ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+          }`}
+        >
+          PEMBAYARAN {isKai ? 'ASURANSI (KAI)' : 'UMUM'}
         </span>
       </div>
       <p className="text-xs text-gray-500 mb-5">
-        Formulir pendaftaran pasien baru rawat jalan RSUD Malangbong.
+        Formulir pendaftaran pasien baru rawat jalan RSUD Malangbong
+        {isKai
+          ? ' dengan penjamin Asuransi (KAI) — data diri sama dengan pasien Umum, hanya cara bayarnya yang berbeda.'
+          : '.'}
       </p>
 
       <form onSubmit={handleSubmit}>
@@ -1286,7 +1441,7 @@ export default function TabDaftar({
             </span>
           ) : (
             <span>
-              <i className="fas fa-paper-plane mr-2"></i> Daftar Pasien Baru (Umum)
+              <i className="fas fa-paper-plane mr-2"></i> Daftar Pasien Baru ({isKai ? 'Asuransi KAI' : 'Umum'})
             </span>
           )}
         </button>

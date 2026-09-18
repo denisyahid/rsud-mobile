@@ -43,3 +43,50 @@ export const formatTime = (dateStr) => {
   return time ? time.replace(':', '.') : null;
 };
 
+
+// ══════════════════════════════════════════════════════════════════════════
+// PENJAMIN / CARA BAYAR PENDAFTARAN
+// ──────────────────────────────────────────────────────────────────────────
+// Dua alur pendaftaran yang formulirnya identik, berbeda hanya penjaminnya:
+//   • umum         → kelompok pasien UMUM, check-in menagih registrasi Rp 75.000
+//   • asuransi_kai → kelompok pasien ASURANSI (KAI), check-in TANPA tagihan
+// Kode ini dikirim apa adanya ke backend (action=daftar_online, field "penjamin")
+// dan dikembalikan lagi pada riwayat/tiket/check-in.
+// ══════════════════════════════════════════════════════════════════════════
+export const PENJAMIN_UMUM = 'umum';
+export const PENJAMIN_KAI = 'asuransi_kai';
+
+export const BIAYA_REGISTRASI_UMUM = 75000;
+
+export const PENJAMIN_LABEL = {
+  [PENJAMIN_UMUM]: 'Umum',
+  [PENJAMIN_KAI]: 'Asuransi (KAI)',
+};
+
+// Urutan tampilan di pemilih penjamin — UMUM selalu pertama & jadi default.
+export const PENJAMIN_OPTIONS = [
+  {
+    kode: PENJAMIN_UMUM,
+    label: 'Umum',
+    icon: 'fa-wallet',
+    singkat: 'UMUM',
+    biaya_registrasi: BIAYA_REGISTRASI_UMUM,
+    keterangan: 'Biaya registrasi Rp 75.000 ditagihkan saat check-in di loket admisi.',
+  },
+  {
+    kode: PENJAMIN_KAI,
+    label: 'Asuransi (KAI)',
+    icon: 'fa-train',
+    singkat: 'ASURANSI KAI',
+    biaya_registrasi: 0,
+    keterangan: 'Ditanggung asuransi KAI — tidak ada tagihan registrasi saat check-in.',
+  },
+];
+
+export const penjaminLabel = (kode) => PENJAMIN_LABEL[kode] || PENJAMIN_LABEL[PENJAMIN_UMUM];
+
+export const isPenjaminAsuransi = (kode) => kode === PENJAMIN_KAI;
+
+// Format angka menjadi "Rp 75.000"
+export const formatRupiah = (nilai) =>
+  'Rp ' + Number(nilai || 0).toLocaleString('id-ID');

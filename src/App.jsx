@@ -9,7 +9,7 @@ import TabDaftar from './components/TabDaftar';
 import TabJadwal from './components/TabJadwal';
 import BottomNav from './components/BottomNav';
 import SplashScreen from './components/SplashScreen';
-import { API_BASE } from './constants/api';
+import { API_BASE, PENJAMIN_UMUM, PENJAMIN_KAI } from './constants/api';
 import { registerBackHandler } from './lib/capacitorBack';
 
 // Banner kecil saat koneksi internet terputus
@@ -45,6 +45,8 @@ export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showRegistration, setShowRegistration] = useState(false);
   const [isExistingMode, setIsExistingMode] = useState(false);
+  // Penjamin pendaftaran: 'umum' (default) atau 'asuransi_kai'
+  const [registrationPenjamin, setRegistrationPenjamin] = useState(PENJAMIN_UMUM);
   const [profile, setProfile] = useState(null);
   const [labOrders, setLabOrders] = useState([]);
   const [radOrders, setRadOrders] = useState([]);
@@ -187,6 +189,7 @@ export default function App() {
     setMasterData(null);
     setShowRegistration(false);
     setIsExistingMode(false);
+    setRegistrationPenjamin(PENJAMIN_UMUM);
     setTicketToShow(null);
   }, [apiCall]);
 
@@ -202,6 +205,11 @@ export default function App() {
           poliklinik: result.data.poliklinik,
           dokter: result.data.dokter,
           noantrian_full: result.data.noantrian,
+          penjamin: result.data.penjamin || registrationPenjamin,
+          penjamin_label: result.data.penjamin_label,
+          biaya_registrasi: result.data.biaya_registrasi,
+          ditanggung_asuransi: !!result.data.ditanggung_asuransi,
+          is_checkin: false,
         };
         setTicketToShow(ticket);
         setActiveTab('riwayat'); // langsung pindah ke tab riwayat
@@ -219,7 +227,7 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [apiCall, loadDashboardData, isLoggedIn]);
+  }, [apiCall, loadDashboardData, isLoggedIn, registrationPenjamin]);
 
   const handleAutoLogin = useCallback(async (nocm) => {
     try {
@@ -244,12 +252,23 @@ export default function App() {
   }, [apiCall, loadDashboardData]);
 
   const handleShowRegistration = useCallback(() => {
+    setRegistrationPenjamin(PENJAMIN_UMUM);
+    setShowRegistration(true);
+    setIsExistingMode(false);
+    loadMasterData();
+  }, [loadMasterData]);
+
+  // Tombol "Daftar Online Pasien KAI (Asuransi)" di layar login:
+  // formulirnya sama persis dengan pasien umum, hanya penjaminnya berbeda.
+  const handleShowRegistrationKai = useCallback(() => {
+    setRegistrationPenjamin(PENJAMIN_KAI);
     setShowRegistration(true);
     setIsExistingMode(false);
     loadMasterData();
   }, [loadMasterData]);
 
   const handleDaftarUmum = useCallback((jadwal) => {
+    setRegistrationPenjamin(PENJAMIN_UMUM);
     setIsExistingMode(true);
     // Jika dipanggil dari tab Jadwal, simpan jadwal untuk mengisi form otomatis
     // (panggilan dari tombol profil mengirim event klik → diabaikan)
@@ -369,6 +388,8 @@ export default function App() {
               onRegisterSuccess={handleAutoLogin}
               isExisting={false}
               profile={null}
+              penjamin={registrationPenjamin}
+              onPenjaminChange={setRegistrationPenjamin}
             />
             <div className="mt-4 text-center">
               <button onClick={() => setShowRegistration(false)} className="link-back">
@@ -390,6 +411,7 @@ export default function App() {
           loading={loading}
           error={loginError}
           onRegisterClick={handleShowRegistration}
+          onRegisterKaiClick={handleShowRegistrationKai}
         />
       </div>
     );
@@ -431,6 +453,8 @@ export default function App() {
               isExisting={isExistingMode}
               profile={profile}
               initialJadwal={selectedJadwal}
+              penjamin={registrationPenjamin}
+              onPenjaminChange={setRegistrationPenjamin}
             />
           )}
         </div>
