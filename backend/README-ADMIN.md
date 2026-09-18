@@ -21,6 +21,7 @@ yang isinya diambil dari database.
 | `backend/uploads/` | Folder penyimpanan gambar hasil unggahan (`.htaccess` menolak eksekusi skrip) |
 | `src/components/TabInformasi.jsx` | Tab *Informasi* — judul ganda di atas iframe dihapus |
 | `backend/tests/admin-smoke.mjs` | 179 pengujian otomatis (PHP WebAssembly + SQLite) |
+| `backend/tests/informasi-tab-smoke.mjs` | 22 pengujian perilaku tab (PHP-WASM + jsdom) |
 | `backend/tests/lint-constants.mjs` | Menolak pemakaian konstanta PHP yang tidak dikenal |
 | `backend/tests/generate-sql.mjs` | Membuat ulang file `.sql` dari kode panel (anti melenceng) |
 | `backend/tests/sql-lint.mjs` | Memeriksa sintaks MySQL file `.sql` |
@@ -186,8 +187,9 @@ dengan SQLite sementara, tetapi menjalankan kode produksi yang sama persis:
 ```bash
 cd backend/tests
 npm install
-npm test              # lint PHP + lint konstanta + 146 uji panel/halaman + lint SQL
+npm test              # lint PHP + lint konstanta + 179 uji panel + 22 uji tab + lint SQL
 npm run test:admin    # hanya uji panel admin & informasi.php
+npm run test:tab      # perilaku tab informasi.php (PHP-WASM + jsdom)
 npm run lint:php      # periksa sintaks semua file .php
 npm run lint:const    # pastikan tidak ada konstanta PHP yang tidak dikenal
 npm run lint:sql      # periksa sintaks MySQL file .sql
@@ -202,6 +204,12 @@ berkas, keabsahan file SQL, jalur cadangan saat database mati, serta **sesi pane
 admin lewat jalur web server sungguhan** (nama sesi `RSUDADMINSESS`, cookie
 `Secure`/`HttpOnly`/`SameSite=Lax`, dan `admin.php` dibuka sebagai request penuh
 tanpa fatal error).
+
+`npm run test:tab` merender `informasi.php` lalu menjalankannya di jsdom untuk
+memastikan perpindahan tab benar-benar bekerja di browser: klik tab memindah
+panel tanpa memuat ulang, `aria-selected` dan hash URL ikut berpindah, panah
+kiri/kanan serta Home/End berfungsi, tab terakhir diingat, dan pencarian tarif
+menyaring baris maupun kelompoknya.
 
 `npm run lint:const` membandingkan setiap konstanta `HURUF_KAPITAL` di
 `backend/*.php` (hasil pembacaan AST) dengan daftar konstanta PHP sungguhan dari
