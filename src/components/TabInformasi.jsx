@@ -10,8 +10,9 @@ const INFO_URL = API_BASE.replace(/api\.php(\?.*)?$/, 'informasi.php');
  * Tab "Informasi" — halaman awal aplikasi.
  *
  * Memuat informasi.php (satu folder dengan API_BASE) secara penuh sebagai web
- * (iframe): slider gambar, kartu pengumuman bergambar, panduan berbentuk
- * dropdown, dan kontak rumah sakit.
+ * (iframe): slider berita di atas, lalu navigasi tiga tab — Tarif Layanan,
+ * Panduan (dropdown), dan Kontak & Layanan. Perpindahan tab terjadi di dalam
+ * informasi.php sendiri, jadi tidak ada navigasi tambahan di sisi aplikasi.
  *
  * Catatan: judul "Informasi" sengaja tidak ditampilkan lagi di sini karena
  * sudah menjadi bagian dari halaman informasi.php (menghindari teks ganda).
