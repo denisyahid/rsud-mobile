@@ -20,7 +20,7 @@ yang isinya diambil dari database.
 | `backend/sql/admin_info_rsudmobile.sql` | Skema + data awal database admin — tinggal **import** |
 | `backend/uploads/` | Folder penyimpanan gambar hasil unggahan (`.htaccess` menolak eksekusi skrip) |
 | `src/components/TabInformasi.jsx` | Tab *Informasi* — judul ganda di atas iframe dihapus |
-| `backend/tests/admin-smoke.mjs` | 179 pengujian otomatis (PHP WebAssembly + SQLite) |
+| `backend/tests/admin-smoke.mjs` | 193 pengujian otomatis (PHP WebAssembly + SQLite) |
 | `backend/tests/informasi-tab-smoke.mjs` | 22 pengujian perilaku tab (PHP-WASM + jsdom) |
 | `backend/tests/lint-constants.mjs` | Menolak pemakaian konstanta PHP yang tidak dikenal |
 | `backend/tests/generate-sql.mjs` | Membuat ulang file `.sql` dari kode panel (anti melenceng) |
@@ -60,6 +60,15 @@ File SQL itu idempoten — aman dijalankan berulang, tidak menduplikasi data.
 
 **Alternatif tanpa import:** buka `admin.php` → menu **Cek Sistem** →
 tombol **Jalankan Instalasi** (tabel dibuat otomatis dari panel).
+
+> **Sudah pernah memasang versi sebelumnya?** Cukup jalankan ulang file SQL yang
+> baru (atau **Cek Sistem → Jalankan Instalasi**) — perintahnya
+> `CREATE TABLE IF NOT EXISTS` + `INSERT ... WHERE NOT EXISTS`, jadi data lama
+> tidak tersentuh dan tabel `tarif` yang baru ikut terbuat. Selama tabel `tarif`
+> belum ada, dashboard menampilkan peringatan *"Skema database belum lengkap"*,
+> halaman informasi tetap jalan, dan tab Tarif menampilkan pesan *"Daftar tarif
+> sedang diperbarui"* — **bukan** angka contoh, supaya pasien tidak pernah
+> melihat harga yang belum resmi.
 
 ### c. Beri izin tulis folder upload
 ```bash
@@ -187,7 +196,7 @@ dengan SQLite sementara, tetapi menjalankan kode produksi yang sama persis:
 ```bash
 cd backend/tests
 npm install
-npm test              # lint PHP + lint konstanta + 179 uji panel + 22 uji tab + lint SQL
+npm test              # lint PHP + lint konstanta + 193 uji panel + 22 uji tab + lint SQL
 npm run test:admin    # hanya uji panel admin & informasi.php
 npm run test:tab      # perilaku tab informasi.php (PHP-WASM + jsdom)
 npm run lint:php      # periksa sintaks semua file .php
@@ -200,7 +209,8 @@ Yang diuji antara lain: instalasi skema, render halaman, login (gagal/sukses/
 terkunci), penolakan CSRF, upload gambar sungguhan (termasuk pengecilan ukuran),
 penolakan berkas berbahaya, toggle & urutan, CRUD ketiga jenis konten,
 pengaturan halaman, ganti password, render seluruh halaman panel, penghapusan
-berkas, keabsahan file SQL, jalur cadangan saat database mati, serta **sesi panel
+berkas, keabsahan file SQL, jalur cadangan saat database mati, jalur upgrade
+database lama yang belum punya tabel `tarif`, serta **sesi panel
 admin lewat jalur web server sungguhan** (nama sesi `RSUDADMINSESS`, cookie
 `Secure`/`HttpOnly`/`SameSite=Lax`, dan `admin.php` dibuka sebagai request penuh
 tanpa fatal error).

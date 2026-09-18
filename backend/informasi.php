@@ -130,15 +130,10 @@ function infoKontenCadangan()
         $panduan[] = ['id' => $i + 1, 'judul' => $s['judul'], 'isi' => $s['isi'], 'ikon' => $s['ikon']];
     }
 
-    $tarif = [];
-    foreach ($contoh['tarif'] ?? [] as $i => $s) {
-        $tarif[] = [
-            'id' => $i + 1, 'kategori' => $s['kategori'], 'nama_layanan' => $s['nama_layanan'],
-            'satuan' => $s['satuan'], 'tarif' => (int) $s['tarif'], 'keterangan' => $s['keterangan'],
-        ];
-    }
-
-    return ['slide' => $slide, 'informasi' => $info, 'panduan' => $panduan, 'tarif' => $tarif];
+    // Sengaja TANPA tarif: harga tidak boleh dikarang. Bila tabel tarif belum
+    // ada atau database mati, tab tarif menampilkan pesan "sedang diperbarui"
+    // (lihat pengaturan `pesan_kosong_tarif`), bukan angka contoh.
+    return ['slide' => $slide, 'informasi' => $info, 'panduan' => $panduan];
 }
 
 /** Kelompokkan tarif berdasarkan kategori (urutan kemunculan dipertahankan). */
@@ -258,7 +253,7 @@ if (strtolower((string) ($_GET['format'] ?? '')) === 'json') {
         'tarif'      => array_map(static function ($t) {
             $t['tarif_teks'] = adminFormatRupiah($t['tarif'] ?? 0);
             return $t;
-        }, $data['ok'] ? $data['tarif'] : ($fallback['tarif'] ?? [])),
+        }, $data['ok'] ? $data['tarif'] : []),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -277,14 +272,14 @@ if (!$darDb || (empty($data['slide']) && empty($data['informasi']) && empty($dat
         $data['slide']     = $cadangan['slide'];
         $data['informasi'] = $cadangan['informasi'];
         $data['panduan']   = $cadangan['panduan'];
-        $data['tarif']     = $cadangan['tarif'];
     } else {
         // database hidup tapi masih kosong → pakai contoh agar halaman tidak hampa
         if (empty($data['slide']))     $data['slide']     = $cadangan['slide'];
         if (empty($data['informasi'])) $data['informasi'] = $cadangan['informasi'];
         if (empty($data['panduan']))   $data['panduan']   = $cadangan['panduan'];
-        if (empty($data['tarif']))     $data['tarif']     = $cadangan['tarif'];
     }
+    // Tarif sengaja tidak pernah diisi dari data contoh: lebih baik menampilkan
+    // pesan "sedang diperbarui" daripada angka harga yang tidak resmi.
 }
 
 // Catatan: data kartu informasi ($data['informasi']) sengaja tidak dirender lagi —
@@ -336,6 +331,10 @@ if ($tampilKontak) {
 }
 $tarifKelompok = infoTarifPerKategori($tarifList);
 $tarifCatatan  = trim((string) ($set['tarif_catatan'] ?? ''));
+$pesanTarifKosong = trim((string) ($set['pesan_kosong_tarif'] ?? ''));
+if ($pesanTarifKosong === '') {
+    $pesanTarifKosong = 'Daftar tarif sedang diperbarui. Silakan hubungi petugas untuk informasi biaya.';
+}
 $tabIds        = array_column($tabList, 'id');
 
 header('Content-Type: text/html; charset=UTF-8');
@@ -670,7 +669,7 @@ header('Pragma: no-cache');
 
         <?php if (count($tarifList) === 0): ?>
           <div class="kosong" style="margin-top:10px">
-            <?php echo e($set['pesan_kosong_tarif'] ?? 'Daftar tarif belum tersedia.'); ?>
+            <?php echo e($pesanTarifKosong); ?>
           </div>
         <?php else: ?>
           <?php if (count($tarifList) > 8): ?>

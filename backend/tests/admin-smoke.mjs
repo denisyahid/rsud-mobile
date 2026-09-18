@@ -21,6 +21,7 @@
 //  14  database mati → informasi.php tetap tampil (konten cadangan)
 //  15  sesi panel admin di jalur web server (nama sesi, cookie aman)
 //  16  CRUD tarif layanan + tampilannya di tab Tarif informasi.php
+//  17  jalur upgrade: database lama yang belum punya tabel tarif
 //
 // Jalankan:  node backend/tests/admin-smoke.mjs
 // ============================================================================
@@ -805,6 +806,7 @@ r = await runStep(php, `
     'catatan'  => strpos($html, 'informasi cadangan') !== false,
     'slide'    => substr_count($html, 'class="slide"'),
     'tarif'    => substr_count($html, 'class="tarif-item"'),
+    'tarifKosong' => strpos($html, 'Daftar tarif sedang diperbarui') !== false,
     'panduan'  => substr_count($html, '<details class="ak-item"'),
     'kontak'   => strpos($html, 'wa.me/') !== false,
     'fatal'    => stripos($html, 'Fatal error') !== false || stripos($html, 'Uncaught') !== false,
@@ -813,7 +815,9 @@ r = await runStep(php, `
 const h14 = r.hasil ?? {};
 ok(h14.panjang > 10000, 'halaman tetap terender tanpa database (' + h14.panjang + ' byte)');
 ok(h14.catatan === true, 'ada catatan halus bahwa konten cadangan dipakai');
-ok(h14.slide >= 1 && h14.tarif >= 1 && h14.panduan >= 1, 'konten cadangan lengkap (slide, tarif, panduan)');
+ok(h14.slide >= 1 && h14.panduan >= 1, 'konten cadangan slide & panduan tetap tampil');
+ok(h14.tarif === 0 && h14.tarifKosong === true,
+  'tarif TIDAK dikarang saat database mati (pesan "sedang diperbarui")', h14.tarif);
 ok(h14.kontak === true, 'kontak default tetap tampil');
 ok(h14.fatal === false, 'tidak ada fatal error yang bocor ke pasien');
 bersih(r, 'tidak ada warning PHP saat database mati');
@@ -1070,6 +1074,88 @@ ok(r.hasil?.tabel === 1, 'tabel daftar tarif dirender');
 ok(r.hasil?.rupiah === true, 'tarif di panel admin diformat rupiah');
 ok(r.hasil?.menu === true, 'menu Tarif Layanan ada di panel admin');
 bersih(r, 'halaman tarif bebas warning PHP');
+
+// ---------------------------------------------------------------------------
+console.log('\n17. Database lama tanpa tabel tarif (jalur upgrade)');
+// ---------------------------------------------------------------------------
+// Meniru server produksi yang database-nya sudah berisi konten tetapi belum
+// menjalankan skema baru: tabel `tarif` tidak ada sama sekali.
+r = await runStep(php, `
+  adminPdo()->exec('DROP TABLE IF EXISTS tarif');
+  echo "@@HASIL@@" . json_encode([
+    'tabelAda'  => adminTableExists('tarif'),
+    'kurang'    => adminMissingTables(),
+  ]);
+`);
+ok(r.hasil?.tabelAda === false && (r.hasil?.kurang ?? []).includes('tarif'),
+  'tabel tarif hilang terdeteksi sebagai skema belum lengkap', JSON.stringify(r.hasil?.kurang));
+
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_GET['page'] = 'dashboard';
+  ob_start(); adminRun(); $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'peringatan' => strpos($html, 'Skema database belum lengkap') !== false,
+    'sebutTarif' => strpos($html, 'tarif') !== false,
+    'fatal'      => stripos($html, 'Fatal error') !== false,
+  ]);
+`);
+ok(r.hasil?.peringatan === true && r.hasil?.sebutTarif === true,
+  'dashboard memperingatkan tabel tarif belum ada');
+ok(r.hasil?.fatal === false, 'dashboard tidak fatal walau tabel tarif hilang');
+bersih(r, 'dashboard bebas warning PHP saat tabel tarif hilang');
+
+r = await runStep(php, `
+  ob_start(); require '${WASM_ROOT}/informasi.php'; $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'panjang'  => strlen($html),
+    'tab'      => substr_count($html, 'data-tab="'),
+    'kosong'   => strpos($html, 'Daftar tarif sedang diperbarui') !== false,
+    'fatal'    => stripos($html, 'Fatal error') !== false || stripos($html, 'Uncaught') !== false,
+    'panduan'  => substr_count($html, '<details class="ak-item"'),
+  ]);
+`);
+ok(r.hasil?.fatal === false && r.hasil?.panjang > 10000,
+  'halaman informasi tetap tampil tanpa tabel tarif (' + r.hasil?.panjang + ' byte)');
+ok(r.hasil?.tab === 3, 'navigasi tiga tab tetap dirender', r.hasil?.tab);
+ok(r.hasil?.kosong === true, 'tab tarif menampilkan pesan "sedang diperbarui", bukan tarif palsu');
+ok(r.hasil?.panduan >= 5, 'tab panduan tidak terpengaruh', r.hasil?.panduan);
+bersih(r, 'informasi.php bebas warning PHP tanpa tabel tarif');
+
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_GET['page'] = 'tarif';
+  ob_start(); adminRun(); $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'pesan' => strpos($html, 'tarif') !== false,
+    'fatal' => stripos($html, 'Fatal error') !== false || stripos($html, 'Uncaught') !== false,
+  ]);
+`);
+ok(r.hasil?.fatal === false, 'menu Tarif Layanan menampilkan pesan error rapi, bukan fatal');
+
+// pemulihan: instalasi otomatis membuat tabel tarif kembali
+r = await runStep(php, `
+  $lap = adminInstallSchema(false);
+  echo "@@HASIL@@" . json_encode([
+    'tabelAda' => adminTableExists('tarif'),
+    'kurang'   => adminMissingTables(),
+    'gagal'    => count(array_filter($lap, fn($l) => empty($l['ok']))),
+  ]);
+`);
+ok(r.hasil?.tabelAda === true && (r.hasil?.kurang ?? []).length === 0 && r.hasil?.gagal === 0,
+  'Instalasi Otomatis membuat tabel tarif kembali tanpa merusak data lain');
+
+r = await runStep(php, `
+  ob_start(); require '${WASM_ROOT}/informasi.php'; $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'slide'   => substr_count($html, 'class="slide"'),
+    'panduan' => substr_count($html, '<details class="ak-item"'),
+    'kosong'  => strpos($html, 'Daftar tarif sedang diperbarui') !== false,
+  ]);
+`);
+ok(r.hasil?.slide >= 1 && r.hasil?.panduan >= 5,
+  'konten lama (slide & panduan) tetap utuh setelah upgrade skema');
+ok(r.hasil?.kosong === true, 'tarif kosong karena instaler dijalankan tanpa data contoh');
 
 // ---------------------------------------------------------------------------
 console.log('\n═══ Hasil ═══');
