@@ -1,0 +1,37 @@
+# ===========================================================================
+# Folder upload gambar — Panel Admin Informasi RSUD Malangbong
+# Jangan izinkan eksekusi skrip apa pun dari folder ini.
+# ===========================================================================
+Options -Indexes -ExecCGI
+
+# Matikan mesin PHP di folder ini (Apache + mod_php)
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+
+# Tolak akses ke berkas skrip (Apache 2.4)
+<IfModule mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phar|pl|py|cgi|sh|htaccess)$">
+        Require all denied
+    </FilesMatch>
+</IfModule>
+
+# Tolak akses ke berkas skrip (Apache 2.2)
+<IfModule !mod_authz_core.c>
+    <FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phar|pl|py|cgi|sh|htaccess)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+</IfModule>
+
+# Cache gambar agak lama (hemat kuota pasien)
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType image/jpeg "access plus 7 days"
+    ExpiresByType image/png  "access plus 7 days"
+    ExpiresByType image/webp "access plus 7 days"
+    ExpiresByType image/gif  "access plus 7 days"
+</IfModule>
