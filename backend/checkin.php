@@ -20,6 +20,54 @@ function generateUuid() {
 }
 
 // ============================================================
+// PENJAMIN: apakah registrasi ini ditanggung ASURANSI (KAI)?
+// ------------------------------------------------------------
+// Pasien dengan penjamin asuransi/KAI tetap check-in seperti biasa
+// (scan QR + nomor antrian), tetapi TIDAK ditagih biaya registrasi
+// Rp 75.000. Penjamin dibaca dari kelompok pasien yang tersimpan pada
+// pasiendaftar_t.objectkelompokpasienlastfk saat pendaftaran.
+//
+// Logika ini adalah salinan ringkas dari backend/api.php (blok PENJAMIN)
+// supaya checkin.php tetap bisa berdiri sendiri. Id kelompok asuransi
+// bisa dipaksa lewat environment variable:
+//   RSUD_KELOMPOK_PASIEN_ASURANSI_KAI = <id kelompokpasien_m>
+// ============================================================
+function kelompokPasienAsuransi($pdo, $kelompokId) {
+    $kelompokId = (int) $kelompokId;
+    if ($kelompokId <= 0) return ['asuransi' => false, 'nama' => '', 'id' => 0];
+
+    $paksa = getenv('RSUD_KELOMPOK_PASIEN_ASURANSI_KAI');
+    if ($paksa !== false && $paksa !== '' && (int) $paksa === $kelompokId) {
+        return ['asuransi' => true, 'nama' => 'Asuransi (KAI)', 'id' => $kelompokId];
+    }
+
+    $nama = '';
+    try {
+        $st = $pdo->prepare("SELECT * FROM kelompokpasien_m WHERE id = :id LIMIT 1");
+        $st->execute([':id' => $kelompokId]);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        if ($row) {
+            foreach (['kelompokpasien', 'namakelompokpasien', 'namakelompok', 'nama'] as $k) {
+                if (isset($row[$k])) { $nama = trim((string) $row[$k]); break; }
+            }
+        }
+    } catch (Throwable $e) {
+        error_log('cek kelompok pasien asuransi gagal: ' . $e->getMessage());
+        return ['asuransi' => false, 'nama' => '', 'id' => $kelompokId];
+    }
+
+    $n = strtoupper(preg_replace('/[^A-Z0-9]+/', ' ', $nama) ?? $nama);
+    $bukanAsuransi = preg_match('/\b(UMUM|REGULER|PRIBADI|MANDIRI|BPJS|JKN|KIS|PBI|ASKES|JAMKESDA|JAMKESMAS)\b/', $n) === 1;
+    $asuransi = !$bukanAsuransi && (
+        preg_match('/\bKAI\b/', $n) === 1
+        || strpos($n, 'KERETA API') !== false
+        || strpos($n, 'ASURANSI') !== false
+    );
+
+    return ['asuransi' => (bool) $asuransi, 'nama' => $nama, 'id' => $kelompokId];
+}
+
+// ============================================================
 // CREATE QR/BARCODE UNTUK CHECKIN
 // ============================================================
 // Barcode check-in bersifat UMUM (satu QR dari halaman barcode.php
@@ -80,6 +128,7 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
         $stmt = $pdo->prepare("
             SELECT pd.norec, pd.noregistrasi, pd.nocmfk, pd.objectruanganlastfk,
                    pd.objectpegawaifk, pd.tglregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
+                   pd.objectkelompokpasienlastfk,
                    ap.norec as norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
             FROM pasiendaftar_t pd
             LEFT JOIN antrianpasiendiperiksa_t ap ON (ap.noregistrasi = pd.noregistrasi OR ap.norec = pd.norec OR ap.noregistrasifk = pd.norec)
@@ -127,7 +176,22 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
             return ['success' => false, 'error' => 'Check-in sudah dilakukan sebelumnya'];
         }
         
+        // ==================== PENJAMIN REGISTRASI ====================
+        // ASURANSI/KAI → check-in tetap jalan, tanpa tagihan registrasi.
+        $infoPenjamin     = kelompokPasienAsuransi($pdo, $reg['objectkelompokpasienlastfk'] ?? 0);
+        $ditanggungAsuransi = (bool) $infoPenjamin['asuransi'];
+        $biayaRegistrasi  = $ditanggungAsuransi ? 0 : 75000;
+        $labelPenjamin    = $ditanggungAsuransi
+            ? ($infoPenjamin['nama'] !== '' ? $infoPenjamin['nama'] : 'Asuransi (KAI)')
+            : 'Umum';
+        error_log("Penjamin check-in: $labelPenjamin (tagihan $biayaRegistrasi)");
+
         // ==================== INSERT STRUK TAGIHAN ====================
+        $noStruk = null;
+        $pelayananNorec = null;
+        if ($ditanggungAsuransi) {
+            error_log("Tagihan registrasi dilewati — ditanggung $labelPenjamin");
+        } else {
         $noStruk = generateStrukNumber($pdo, 1);
         $strukNorec = generateUuid();
         
@@ -181,6 +245,7 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
             ':kelompok' => (string)$kelompokTransaksi,
             ':dpjp' => $reg['objectpegawaifk'] ?? null,
         ]);
+        } // endif $ditanggungAsuransi — tagihan hanya untuk penjamin UMUM
         
         // ==================== UPDATE FLAG CHECK-IN ====================
         $stmtCheckinFlag = $pdo->prepare("UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = :norec_reg");
@@ -249,10 +314,15 @@ function saveCheckinData($pdo, $pasienId, $noregistrasi, $barcode) {
         
         return [
             'success' => true,
-            'message' => 'Check-in berhasil! Tagihan registrasi 75.000 telah ditambahkan.',
+            'message' => $ditanggungAsuransi
+                ? 'Check-in berhasil! Biaya registrasi ditanggung ' . $labelPenjamin . ' — tidak ada tagihan.'
+                : 'Check-in berhasil! Tagihan registrasi 75.000 telah ditambahkan.',
             'data' => [
                 'noregistrasi' => $noregistrasi,
-                'tagihan_checkin' => 75000,
+                'tagihan_checkin' => $biayaRegistrasi,
+                'penjamin' => $ditanggungAsuransi ? 'asuransi_kai' : 'umum',
+                'penjamin_label' => $labelPenjamin,
+                'ditanggung_asuransi' => $ditanggungAsuransi,
                 'tgl_checkin' => date('Y-m-d H:i:s'),
                 'nostruk' => $noStruk,
                 'pelayanan_norec' => $pelayananNorec

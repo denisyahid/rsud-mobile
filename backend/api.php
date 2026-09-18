@@ -32,6 +32,305 @@ const KELOMPOK_PASIEN_DEFAULT  = 1;
 $HARI_NAMA = [1 => 'Senin', 2 => 'Selasa', 3 => 'Rabu', 4 => 'Kamis', 5 => 'Jumat', 6 => 'Sabtu', 7 => 'Minggu'];
 
 // ============================================================
+// PENJAMIN / CARA BAYAR:  UMUM  vs  ASURANSI (KAI)
+// ------------------------------------------------------------
+// Alur "Daftar Pasien KAI" SAMA PERSIS dengan daftar pasien umum online
+// (form identitas, cek NIK, pilih poli & dokter, dapat nomor antrian).
+// Yang berbeda hanya penjamin/cara bayarnya:
+//
+//   • pasiendaftar_t.objectkelompokpasienlastfk → id kelompok ASURANSI/KAI
+//     (bukan id kelompok UMUM)
+//   • saat check-in TIDAK dibuat tagihan registrasi Rp 75.000; pasien KAI
+//     tetap check-in lewat scan QR dan tetap mendapat nomor antrian.
+//
+// Id kelompok pasien ASURANSI dicari otomatis dari tabel kelompokpasien_m
+// (pencocokan nama: "KAI", "KERETA API", "ASURANSI", "PERUSAHAAN", dst).
+// Bila di SIMRS namanya berbeda, paksa lewat environment variable:
+//   RSUD_KELOMPOK_PASIEN_ASURANSI_KAI = <id kelompok asuransi>
+//   RSUD_KELOMPOK_PASIEN_UMUM         = <id kelompok umum>      (default 1)
+//   RSUD_REKANAN_ASURANSI_KAI         = <id rekanan/asuransi>   (default 0)
+// ============================================================
+
+const PENJAMIN_UMUM          = 'umum';
+const PENJAMIN_KAI           = 'asuransi_kai';
+const LABEL_PENJAMIN_UMUM    = 'Umum';
+const LABEL_PENJAMIN_KAI     = 'Asuransi (KAI)';
+const BIAYA_REGISTRASI_KAI   = 0;      // KAI/asuransi: tidak ada tagihan registrasi
+
+/** Konfigurasi penjamin (bisa ditimpa environment variable). */
+function penjaminKonfigurasi() {
+    static $cfg = null;
+    if ($cfg !== null) return $cfg;
+    $env = function ($nama, $default = null) {
+        $v = getenv($nama);
+        return ($v === false || $v === '') ? $default : $v;
+    };
+    $cfg = [
+        'umum_id'     => (int) $env('RSUD_KELOMPOK_PASIEN_UMUM', KELOMPOK_PASIEN_DEFAULT),
+        'kai_id'      => $env('RSUD_KELOMPOK_PASIEN_ASURANSI_KAI', null),
+        'kai_rekanan' => (int) $env('RSUD_REKANAN_ASURANSI_KAI', REKANAN_DEFAULT),
+        'umum_rekanan'=> (int) $env('RSUD_REKANAN_UMUM', REKANAN_DEFAULT),
+    ];
+    if ($cfg['kai_id'] !== null) $cfg['kai_id'] = (int) $cfg['kai_id'];
+    return $cfg;
+}
+
+/**
+ * Normalisasi input penjamin dari aplikasi → kode baku.
+ * Apa pun yang tidak dikenal dianggap UMUM (default).
+ */
+function penjaminKode($nilai) {
+    $v = strtolower(trim((string) $nilai));
+    $v = preg_replace('/[^a-z0-9]+/', '_', $v) ?? $v;
+    $v = trim($v, '_');
+    if ($v === '') return PENJAMIN_UMUM;
+
+    $kai = ['kai', 'asuransi_kai', 'kai_asuransi', 'asuransi', 'asuransikai', 'pt_kai',
+            'kereta_api', 'kereta_api_indonesia', 'asuransi_kereta_api', 'private', 'swasta', 'asuransi_swasta'];
+    if (in_array($v, $kai, true)) return PENJAMIN_KAI;
+    if (strpos($v, 'kai') !== false || strpos($v, 'asuransi') !== false) return PENJAMIN_KAI;
+
+    return PENJAMIN_UMUM;   // 'umum', 'reguler', 'bpjs' (tidak dipakai), dll → UMUM
+}
+
+/** Label tampilan untuk sebuah kode penjamin. */
+function penjaminLabel($kode) {
+    return penjaminKode($kode) === PENJAMIN_KAI ? LABEL_PENJAMIN_KAI : LABEL_PENJAMIN_UMUM;
+}
+
+/** Biaya registrasi yang ditagihkan saat check-in untuk kode penjamin ini. */
+function penjaminBiayaRegistrasi($kode) {
+    return penjaminKode($kode) === PENJAMIN_KAI ? BIAYA_REGISTRASI_KAI : BIAYA_REGISTRASI;
+}
+
+/** Apakah penjamin ini menanggung biaya registrasi (true = pasien tidak ditagih)? */
+function penjaminDitanggungAsuransi($kode) {
+    return penjaminKode($kode) === PENJAMIN_KAI;
+}
+
+/**
+ * Ambil daftar kelompok pasien dari SIMRS.
+ * Nama kolom dideteksi otomatis (kelompokpasien / namakelompokpasien / nama)
+ * supaya tetap jalan bila versi SIMRS-nya sedikit berbeda.
+ */
+function kelompokPasienRows($pdo) {
+    static $rows = null;
+    static $key = null;
+    $sig = spl_object_hash($pdo);
+    if (is_array($rows) && $key === $sig) return $rows;
+
+    $rows = [];
+    $key  = $sig;
+    try {
+        $st = $pdo->query("SELECT * FROM kelompokpasien_m ORDER BY id");
+        $all = $st ? $st->fetchAll() : [];
+        foreach ($all as $r) {
+            $kolomNama = null;
+            foreach (['kelompokpasien', 'namakelompokpasien', 'namakelompok', 'nama'] as $k) {
+                if (array_key_exists($k, $r)) { $kolomNama = $k; break; }
+            }
+            if ($kolomNama === null) continue;
+            if (array_key_exists('statusenabled', $r) && !$r['statusenabled']) continue;
+            $rows[] = ['id' => (int) $r['id'], 'nama' => trim((string) $r[$kolomNama])];
+        }
+    } catch (Throwable $e) {
+        $rows = [];   // tabel tidak ada → penjamin asuransi dianggap belum dikonfigurasi
+    }
+    return $rows;
+}
+
+/**
+ * Skor kecocokan nama kelompok pasien terhadap penjamin yang dicari.
+ * Nilai < 0 berarti nama itu jelas bukan kandidat (mis. "Umum", "BPJS").
+ */
+function penjaminSkorNama($nama, $kode) {
+    $n = strtoupper(trim((string) $nama));
+    $n = preg_replace('/[^A-Z0-9]+/', ' ', $n) ?? $n;
+    if ($n === '') return -200;
+
+    $isUmum = preg_match('/\b(UMUM|REGULER|PRIBADI|MANDIRI|BAYAR SENDIRI|TUNAI)\b/', $n) === 1;
+    $isJamkes = preg_match('/\b(BPJS|JKN|KIS|PBI|ASKES|JAMKESDA|JAMKESMAS|PAHLAWAN)\b/', $n) === 1;
+
+    if ($kode === PENJAMIN_KAI) {
+        if ($isUmum)   return -100;
+        if ($isJamkes) return -80;
+        $skor = 0;
+        if (preg_match('/\bKAI\b/', $n) === 1)                  $skor += 8;
+        if (strpos($n, 'KERETA API') !== false)                   $skor += 8;
+        if (strpos($n, 'ASURANSI') !== false)                     $skor += 5;
+        if (preg_match('/\b(PT|PERSERO)\b/', $n) === 1)         $skor += 1;
+        if (preg_match('/\b(SWASTA|PERUSAHAAN|REKANAN|KERJASAMA|KERJA SAMA|PRIVAT)\b/', $n) === 1) $skor += 2;
+        return $skor;
+    }
+
+    // penjamin UMUM
+    if ($isUmum)   return 10;
+    if ($isJamkes) return -100;
+    return 0;
+}
+
+/**
+ * Cari id kelompokpasien_m untuk kode penjamin.
+ * Urutan: env override → pencocokan nama → default.
+ * Mengembalikan null bila tidak ditemukan (khusus ASURANSI).
+ */
+function cariKelompokPasienId($pdo, $kode) {
+    $kode = penjaminKode($kode);
+    $cfg  = penjaminKonfigurasi();
+    $rows = kelompokPasienRows($pdo);
+
+    if ($kode === PENJAMIN_KAI && $cfg['kai_id'] !== null && $cfg['kai_id'] > 0) {
+        return $cfg['kai_id'];
+    }
+    if ($kode === PENJAMIN_UMUM && $cfg['umum_id'] > 0) {
+        // pakai id default bila memang ada di master (atau master tidak terbaca)
+        if (!$rows) return $cfg['umum_id'];
+        foreach ($rows as $r) if ($r['id'] === $cfg['umum_id']) return $cfg['umum_id'];
+    }
+
+    $terbaik = null; $skorTerbaik = 0;
+    foreach ($rows as $r) {
+        $skor = penjaminSkorNama($r['nama'], $kode);
+        if ($skor > $skorTerbaik || ($skor === $skorTerbaik && $skor > 0 && $terbaik !== null && $r['id'] < $terbaik)) {
+            $skorTerbaik = $skor;
+            $terbaik = $r['id'];
+        }
+    }
+    if ($terbaik !== null && $skorTerbaik > 0) return $terbaik;
+
+    return $kode === PENJAMIN_UMUM ? $cfg['umum_id'] : null;
+}
+
+/** Nama kelompok pasien berdasarkan id (untuk label & log). */
+function namaKelompokPasien($pdo, $id) {
+    $id = (int) $id;
+    if ($id <= 0) return '';
+    foreach (kelompokPasienRows($pdo) as $r) {
+        if ($r['id'] === $id) return $r['nama'];
+    }
+    return '';
+}
+
+/**
+ * Susun informasi penjamin lengkap untuk satu pendaftaran/reservasi.
+ * @return array kode, label, kelompok_id, kelompok_nama, rekanan_id,
+ *               biaya_registrasi, tersedia, pesan
+ */
+function resolvePenjamin($pdo, $nilai) {
+    $kode = penjaminKode($nilai);
+    $cfg  = penjaminKonfigurasi();
+    $id   = cariKelompokPasienId($pdo, $kode);
+
+    if ($kode === PENJAMIN_KAI) {
+        if ($id === null) {
+            return [
+                'kode'             => PENJAMIN_KAI,
+                'label'            => LABEL_PENJAMIN_KAI,
+                'kelompok_id'      => null,
+                'kelompok_nama'    => '',
+                'rekanan_id'       => $cfg['kai_rekanan'],
+                'biaya_registrasi' => BIAYA_REGISTRASI_KAI,
+                'tersedia'         => false,
+                'pesan'            => 'Penjamin Asuransi (KAI) belum tersedia di master SIMRS '
+                                    . '(tabel kelompokpasien_m belum punya kelompok Asuransi/KAI). '
+                                    . 'Minta administrator menambahkan kelompoknya atau set '
+                                    . 'RSUD_KELOMPOK_PASIEN_ASURANSI_KAI=<id>.',
+            ];
+        }
+        return [
+            'kode'             => PENJAMIN_KAI,
+            'label'            => LABEL_PENJAMIN_KAI,
+            'kelompok_id'      => (int) $id,
+            'kelompok_nama'    => namaKelompokPasien($pdo, $id),
+            'rekanan_id'       => $cfg['kai_rekanan'],
+            'biaya_registrasi' => BIAYA_REGISTRASI_KAI,
+            'tersedia'         => true,
+            'pesan'            => '',
+        ];
+    }
+
+    return [
+        'kode'             => PENJAMIN_UMUM,
+        'label'            => LABEL_PENJAMIN_UMUM,
+        'kelompok_id'      => $id === null ? KELOMPOK_PASIEN_DEFAULT : (int) $id,
+        'kelompok_nama'    => namaKelompokPasien($pdo, $id ?? 0),
+        'rekanan_id'       => $cfg['umum_rekanan'],
+        'biaya_registrasi' => BIAYA_REGISTRASI,
+        'tersedia'         => true,
+        'pesan'            => '',
+    ];
+}
+
+/**
+ * Kebalikan dari resolvePenjamin: tentukan penjamin sebuah registrasi dari
+ * id kelompok pasien yang tersimpan (dipakai saat check-in & riwayat).
+ */
+function penjaminDariKelompokId($pdo, $kelompokId) {
+    $kelompokId = (int) $kelompokId;
+    $cfg = penjaminKonfigurasi();
+
+    if ($kelompokId > 0) {
+        if ($cfg['kai_id'] !== null && $kelompokId === $cfg['kai_id']) {
+            return resolvePenjamin($pdo, PENJAMIN_KAI);
+        }
+        $nama = namaKelompokPasien($pdo, $kelompokId);
+        if ($nama !== '' && penjaminSkorNama($nama, PENJAMIN_KAI) > 0) {
+            $info = resolvePenjamin($pdo, PENJAMIN_KAI);
+            $info['kelompok_id']   = $kelompokId;
+            $info['kelompok_nama'] = $nama;
+            $info['tersedia']      = true;
+            $info['pesan']         = '';
+            return $info;
+        }
+    }
+
+    $info = resolvePenjamin($pdo, PENJAMIN_UMUM);
+    if ($kelompokId > 0) {
+        $info['kelompok_id']   = $kelompokId;
+        $info['kelompok_nama'] = namaKelompokPasien($pdo, $kelompokId);
+    }
+    return $info;
+}
+
+/** Daftar pilihan penjamin untuk dropdown di aplikasi (dipakai get_masters). */
+function daftarPenjaminMaster($pdo) {
+    $umum = resolvePenjamin($pdo, PENJAMIN_UMUM);
+    $kai  = resolvePenjamin($pdo, PENJAMIN_KAI);
+    return [
+        [
+            'kode'             => PENJAMIN_UMUM,
+            'label'            => LABEL_PENJAMIN_UMUM,
+            'kelompok_id'      => $umum['kelompok_id'],
+            'kelompok_nama'    => $umum['kelompok_nama'],
+            'biaya_registrasi' => $umum['biaya_registrasi'],
+            'keterangan'       => 'Biaya registrasi Rp ' . number_format(BIAYA_REGISTRASI, 0, ',', '.') . ' dibayar saat check-in.',
+            'tersedia'         => true,
+            'default'          => true,
+        ],
+        [
+            'kode'             => PENJAMIN_KAI,
+            'label'            => LABEL_PENJAMIN_KAI,
+            'kelompok_id'      => $kai['kelompok_id'],
+            'kelompok_nama'    => $kai['kelompok_nama'],
+            'biaya_registrasi' => $kai['biaya_registrasi'],
+            'keterangan'       => $kai['tersedia']
+                ? 'Ditanggung asuransi — tidak ada tagihan registrasi saat check-in.'
+                : $kai['pesan'],
+            'tersedia'         => (bool) $kai['tersedia'],
+            'default'          => false,
+        ],
+    ];
+}
+
+// ── Mode uji (backend/tests/penjamin-smoke.mjs) ─────────────────────────────
+// Bila konstanta ini didefinisikan sebelum require, api.php berhenti di sini:
+// tidak ada koneksi database, tidak ada penanganan request. Seluruh fungsi
+// penjamin di atas tetap bisa dipanggil dengan PDO apa pun (termasuk SQLite).
+if (defined('RSUD_API_NO_RUN')) {
+    return;
+}
+
+// ============================================================
 // CORS & SESSION
 // ============================================================
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
@@ -316,8 +615,14 @@ function findActiveBooking($pdo, $pasienId) {
 // ============================================================
 // FUNGSI UTAMA: buatRegistrasiDanAntrian
 // ============================================================
-function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganId, $dokterId, $tglKunjungan, $statusPasien) {
+function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganId, $dokterId, $tglKunjungan, $statusPasien, $penjamin = null) {
     // $pasienId HARUS UUID
+    // $penjamin: hasil resolvePenjamin() — null berarti UMUM (perilaku lama)
+    if (!is_array($penjamin)) $penjamin = resolvePenjamin($pdo, PENJAMIN_UMUM);
+    $kelompokPasienId = (int) ($penjamin['kelompok_id'] ?? KELOMPOK_PASIEN_DEFAULT);
+    if ($kelompokPasienId <= 0) $kelompokPasienId = KELOMPOK_PASIEN_DEFAULT;
+    $rekananId = (int) ($penjamin['rekanan_id'] ?? REKANAN_DEFAULT);
+
     $pdo->beginTransaction();
     $pdo->exec("SELECT pg_advisory_xact_lock(hashtext('antrian|" . $ruanganId . "|" . $tglKunjungan . "'))");
 
@@ -371,12 +676,12 @@ function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganI
         ':tglregistrasi'  => $tglKunjungan . ' ' . date('H:i:s'),
         ':ruangan'        => $ruanganId,
         ':dokter'         => $dokterId,
-        ':kelompokpasien' => KELOMPOK_PASIEN_DEFAULT,
+        ':kelompokpasien' => $kelompokPasienId,
         ':statuspasien'   => $statusPasien,
         ':now'            => $now,
         ':jenispelayanan' => 1,
         ':asalrujukan'    => ASAL_RUJUKAN_DEFAULT,
-        ':rekanan'        => REKANAN_DEFAULT,
+        ':rekanan'        => $rekananId,
         ':petugas'        => 'System',
         ':ischeckin'      => 0,
     ]);
@@ -415,6 +720,13 @@ function buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $nocm, $ruanganI
         'poliklinik'    => $namaRuangan,
         'dokter'        => $namaDokter,
         'norec_apd'     => $apdNorec,
+        // ── info penjamin (dipakai aplikasi utk tiket/riwayat) ──
+        'penjamin'           => $penjamin['kode'] ?? PENJAMIN_UMUM,
+        'penjamin_label'     => $penjamin['label'] ?? LABEL_PENJAMIN_UMUM,
+        'kelompok_pasien_id' => $kelompokPasienId,
+        'kelompok_pasien'    => $penjamin['kelompok_nama'] ?? '',
+        'biaya_registrasi'   => (int) ($penjamin['biaya_registrasi'] ?? BIAYA_REGISTRASI),
+        'ditanggung_asuransi'=> penjaminDitanggungAsuransi($penjamin['kode'] ?? PENJAMIN_UMUM),
     ];
 }
 
@@ -462,6 +774,20 @@ switch ($action) {
         $dokterId     = !empty($input['dokter_id']) ? intval($input['dokter_id']) : null;
         $tglKunjungan = trim($input['tgl_kunjungan'] ?? date('Y-m-d'));
 
+        // ── Penjamin / cara bayar: UMUM (default) atau ASURANSI (KAI) ────────
+        // Form identitas pasien sama persis; yang berbeda hanya penjaminnya.
+        $penjaminInput = $input['penjamin'] ?? $input['cara_bayar'] ?? $input['jenis_pembayaran']
+                      ?? $input['pembayaran'] ?? $input['kelompok_pasien'] ?? '';
+        $nomorAsuransi = trim((string) ($input['nomor_asuransi'] ?? $input['no_asuransi']
+                                     ?? $input['nomor_polis'] ?? $input['no_polis'] ?? ''));
+        $penjamin = resolvePenjamin($pdo, $penjaminInput);
+        if (!$penjamin['tersedia']) {
+            respond(['error' => $penjamin['pesan']], 400);
+        }
+        $pesanSuksesAsuransi = penjaminDitanggungAsuransi($penjamin['kode'])
+            ? ' Penjamin ' . $penjamin['label'] . ' — tidak ada tagihan registrasi saat check-in.'
+            : '';
+
         if (!$ruanganId) respond(['error' => 'Poliklinik Tujuan wajib dipilih'], 400);
         if (!$dokterId)  respond(['error' => 'Dokter wajib dipilih'], 400);
         if (!validDate($tglKunjungan)) respond(['error' => 'Tanggal kunjungan tidak valid'], 400);
@@ -487,8 +813,9 @@ switch ($action) {
             $pasien = $stP->fetch();
             if (!$pasien) respond(['error' => 'Data pasien tidak ditemukan'], 400);
             $ticket = buatRegistrasiDanAntrian($pdo, $pasienId, $pasien['namapasien'], $pasien['nocm'],
-                $ruanganId, $dokterId, $tglKunjungan, 'Pasien Lama');
-            respond(['success' => true, 'message' => 'Reservasi kunjungan berhasil!', 'data' => $ticket]);
+                $ruanganId, $dokterId, $tglKunjungan, 'Pasien Lama', $penjamin);
+            respond(['success' => true, 'message' => 'Reservasi kunjungan berhasil!' . $pesanSuksesAsuransi,
+                     'data' => $ticket]);
         }
 
         // =================== MODE A: PASIEN BARU ===================
@@ -625,6 +952,13 @@ switch ($action) {
                 ':kodepos' => $kodepos,
             ]);
 
+            // Nomor kepesertaan asuransi/KAI (opsional) — disimpan hanya bila
+            // kolomnya tersedia di SIMRS ini, supaya tidak membuat insert gagal.
+            if ($nomorAsuransi !== '' && tableHasColumn($pdo, 'pasien_m', 'noasuransilain')) {
+                $stAsuransi = $pdo->prepare("UPDATE pasien_m SET noasuransilain = :no WHERE id = :id");
+                $stAsuransi->execute([':no' => $nomorAsuransi, ':id' => $pasienId]);
+            }
+
             $pdo->commit();
         } catch (Exception $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -632,8 +966,10 @@ switch ($action) {
         }
 
         $ticket = buatRegistrasiDanAntrian($pdo, $pasienId, $namaPasien, $noCm,
-            $ruanganId, $dokterId, $tglKunjungan, 'Pasien Baru');
-        respond(['success' => true, 'message' => 'Pendaftaran online pasien baru berhasil!', 'data' => $ticket]);
+            $ruanganId, $dokterId, $tglKunjungan, 'Pasien Baru', $penjamin);
+        respond(['success' => true,
+                 'message' => 'Pendaftaran online pasien baru berhasil!' . $pesanSuksesAsuransi,
+                 'data' => $ticket]);
         break;
 
     // ---------- SEARCH DESA ----------
@@ -686,6 +1022,9 @@ switch ($action) {
                                                WHERE statusenabled = true AND (objectjenispegawaifk = 1 OR namalengkap ILIKE 'dr%')
                                                ORDER BY namalengkap")->fetchAll(),
             'kelompok_pasien'  => $pdo->query("SELECT id, kelompokpasien FROM kelompokpasien_m WHERE statusenabled = true ORDER BY id")->fetchAll(),
+            // Pilihan penjamin untuk dropdown booking: UMUM (default) & ASURANSI KAI
+            'penjamin'         => daftarPenjaminMaster($pdo),
+            'penjamin_default' => PENJAMIN_UMUM,
         ];
         if (empty($data['negara'])) $data['negara'] = [['id' => 0, 'nama' => 'Indonesia']];
         respond(['success' => true, 'data' => $data]);
@@ -856,6 +1195,7 @@ switch ($action) {
     case 'get_riwayat':
         $pasienId = requireLogin();
         $sql = "SELECT pd.norec, pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin,
+                       pd.objectkelompokpasienlastfk AS kelompok_pasien_id,
                        ru.namaruangan,
                        COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS namadokter,
                        a.noantrian, a.prefixnoantrian,
@@ -895,7 +1235,14 @@ switch ($action) {
             $r['noantrian_full'] = !empty($r['prefixnoantrian']) && $r['noantrian'] !== null
                 ? $r['prefixnoantrian'] . '-' . str_pad((string)$r['noantrian'], 3, '0', STR_PAD_LEFT)
                 : null;
-            unset($r['ischeckin'], $r['noantrian'], $r['prefixnoantrian']);
+            // Penjamin registrasi ini (Umum / Asuransi KAI) + apakah ada tagihan
+            $pj = penjaminDariKelompokId($pdo, $r['kelompok_pasien_id'] ?? 0);
+            $r['penjamin']            = $pj['kode'];
+            $r['penjamin_label']      = $pj['label'];
+            $r['kelompok_pasien']     = $pj['kelompok_nama'];
+            $r['biaya_registrasi']    = (int) $pj['biaya_registrasi'];
+            $r['ditanggung_asuransi'] = penjaminDitanggungAsuransi($pj['kode']);
+            unset($r['ischeckin'], $r['noantrian'], $r['prefixnoantrian'], $r['kelompok_pasien_id']);
             $unique[] = $r;
         }
         respond(['success' => true, 'data' => $unique]);
@@ -907,6 +1254,7 @@ switch ($action) {
         $noreg = trim($_GET['noregistrasi'] ?? '');
         if ($noreg === '') respond(['error' => 'noregistrasi wajib diisi'], 400);
         $st = $pdo->prepare("SELECT pd.noregistrasi, pd.tglregistrasi, pd.tglpulang, pd.ischeckin,
+                                    pd.objectkelompokpasienlastfk AS kelompok_pasien_id,
                                     p.namapasien, p.nocm,
                                     ru.namaruangan AS poliklinik,
                                     COALESCE(pg_reg.namalengkap, pg_ant.namalengkap, '-') AS dokter,
@@ -937,7 +1285,14 @@ switch ($action) {
         $t['noantrian_full'] = !empty($t['prefixnoantrian']) && $t['noantrian'] !== null
             ? $t['prefixnoantrian'] . '-' . str_pad((string)$t['noantrian'], 3, '0', STR_PAD_LEFT) : '-';
         $t['is_checkin'] = (bool)$t['ischeckin'];
-        unset($t['noantrian'], $t['prefixnoantrian'], $t['ischeckin']);
+        // Penjamin tiket (Umum / Asuransi KAI)
+        $pj = penjaminDariKelompokId($pdo, $t['kelompok_pasien_id'] ?? 0);
+        $t['penjamin']            = $pj['kode'];
+        $t['penjamin_label']      = $pj['label'];
+        $t['kelompok_pasien']     = $pj['kelompok_nama'];
+        $t['biaya_registrasi']    = (int) $pj['biaya_registrasi'];
+        $t['ditanggung_asuransi'] = penjaminDitanggungAsuransi($pj['kode']);
+        unset($t['noantrian'], $t['prefixnoantrian'], $t['ischeckin'], $t['kelompok_pasien_id']);
         respond(['success' => true, 'data' => $t]);
         break;
 
@@ -963,6 +1318,7 @@ switch ($action) {
         $pdo->beginTransaction();
         $st = $pdo->prepare("SELECT pd.norec, pd.noregistrasi, pd.statusenabled, pd.tglpulang, pd.ischeckin,
                                     pd.objectruanganlastfk, pd.objectpegawaifk, pd.tglregistrasi,
+                                    pd.objectkelompokpasienlastfk,
                                     ap.norec AS norec_apd, ap.statusantrian, ap.noantrian, ap.prefixnoantrian
                              FROM pasiendaftar_t pd
                              LEFT JOIN LATERAL (
@@ -982,12 +1338,21 @@ switch ($action) {
         if ($reg['statusantrian'] == 2)        { $pdo->rollBack(); respond(['error' => 'Kunjungan sudah selesai pemeriksaan'], 400); }
         if ($reg['ischeckin'])                 { $pdo->rollBack(); respond(['error' => 'Check-in sudah dilakukan sebelumnya'], 400); }
 
-        // CEGAH DUPLIKASI STRUK
-        $cekStruk = $pdo->prepare("SELECT COUNT(*) FROM strukpelayanan_t WHERE noregistrasi = :noreg");
-        $cekStruk->execute([':noreg' => $noreg]);
-        if ((int)$cekStruk->fetchColumn() > 0) {
-            $pdo->rollBack();
-            respond(['error' => 'Tagihan sudah pernah dibuat untuk registrasi ini. Hubungi admisi jika perlu.'], 400);
+        // ── Penjamin registrasi ini (dibaca dari kelompok pasien saat booking) ──
+        // Pasien ASURANSI/KAI: check-in tetap jalan normal (scan QR + nomor antrian),
+        // hanya saja TIDAK dibuat tagihan registrasi Rp 75.000.
+        $penjaminRegistrasi = penjaminDariKelompokId($pdo, $reg['objectkelompokpasienlastfk'] ?? 0);
+        $biayaRegistrasi    = (int) $penjaminRegistrasi['biaya_registrasi'];
+        $perluTagihan       = $biayaRegistrasi > 0 && !penjaminDitanggungAsuransi($penjaminRegistrasi['kode']);
+
+        // CEGAH DUPLIKASI STRUK (hanya relevan bila ada tagihan registrasi)
+        if ($perluTagihan) {
+            $cekStruk = $pdo->prepare("SELECT COUNT(*) FROM strukpelayanan_t WHERE noregistrasi = :noreg");
+            $cekStruk->execute([':noreg' => $noreg]);
+            if ((int)$cekStruk->fetchColumn() > 0) {
+                $pdo->rollBack();
+                respond(['error' => 'Tagihan sudah pernah dibuat untuk registrasi ini. Hubungi admisi jika perlu.'], 400);
+            }
         }
 
         $apdNorec      = $reg['norec_apd'] ?? null;
@@ -1048,51 +1413,55 @@ switch ($action) {
 
         $noStruk = null;
         $now = date('Y-m-d H:i:s');
-        try {
-            $maxStruk = $pdo->query("SELECT COALESCE(MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 0) AS m
-                                     FROM strukpelayanan_t
-                                     WHERE nostruk LIKE 'S%' AND LENGTH(nostruk) > 1
-                                       AND SUBSTRING(nostruk FROM 2) ~ '^[0-9]+$'")->fetch();
-            $noStruk = 'S' . str_pad(((int)($maxStruk['m'] ?? 0)) + 1, 9, '0', STR_PAD_LEFT);
-            insertFiltered($pdo, 'strukpelayanan_t', [
-                'norec'                     => genUuid(),
-                'kdprofile'                 => 1,
-                'statusenabled'             => true,
-                'noregistrasifk'            => $reg['norec'],
-                'noregistrasi'              => $noreg,
-                'tglstruk'                  => $now,
-                'totalharusdibayar'         => BIAYA_REGISTRASI,
-                'nostruk'                   => $noStruk,
-                'objectkelompoktransaksifk' => KELOMPOK_TRANSAKSI_STRUK,
-                'created_at'                => $now,
-                'updated_at'                => $now,
-            ]);
 
-            insertFiltered($pdo, 'pelayananpasien_t', [
-                'norec'               => genUuid(),
-                'kdprofile'           => 1,
-                'statusenabled'       => true,
-                'noregistrasifk'      => $apdNorec,
-                'noregistrasi'        => $noreg,
-                'tglregistrasi'       => $now,
-                'tglpelayanan'        => $now,
-                'produkfk'            => PRODUK_BIAYA_REGISTRASI,
-                'jumlah'              => 1,
-                'hargasatuan'         => BIAYA_REGISTRASI,
-                'hargajual'           => BIAYA_REGISTRASI,
-                'harganetto'          => BIAYA_REGISTRASI,
-                'kelasfk'             => KELAS_FK,
-                'kdkelompoktransaksi' => KELOMPOK_TRANSAKSI_TINDAKAN,
-                'keteranganlain'      => 'BIAYA REGISTRASI',
-                'stock'               => 0,
-                'jasa'                => 0,
-                'dpjp'                => $dokterId,
-                'created_at'          => $now,
-                'updated_at'          => $now,
-            ]);
-        } catch (Exception $billEx) {
-            error_log('Check-in tagihan dilewati: ' . $billEx->getMessage());
-            $noStruk = $noStruk ?: null;
+        // Tagihan registrasi hanya untuk penjamin UMUM.
+        if ($perluTagihan) {
+            try {
+                $maxStruk = $pdo->query("SELECT COALESCE(MAX(CAST(SUBSTRING(nostruk FROM 2) AS BIGINT)), 0) AS m
+                                         FROM strukpelayanan_t
+                                         WHERE nostruk LIKE 'S%' AND LENGTH(nostruk) > 1
+                                           AND SUBSTRING(nostruk FROM 2) ~ '^[0-9]+$'")->fetch();
+                $noStruk = 'S' . str_pad(((int)($maxStruk['m'] ?? 0)) + 1, 9, '0', STR_PAD_LEFT);
+                insertFiltered($pdo, 'strukpelayanan_t', [
+                    'norec'                     => genUuid(),
+                    'kdprofile'                 => 1,
+                    'statusenabled'             => true,
+                    'noregistrasifk'            => $reg['norec'],
+                    'noregistrasi'              => $noreg,
+                    'tglstruk'                  => $now,
+                    'totalharusdibayar'         => $biayaRegistrasi,
+                    'nostruk'                   => $noStruk,
+                    'objectkelompoktransaksifk' => KELOMPOK_TRANSAKSI_STRUK,
+                    'created_at'                => $now,
+                    'updated_at'                => $now,
+                ]);
+
+                insertFiltered($pdo, 'pelayananpasien_t', [
+                    'norec'               => genUuid(),
+                    'kdprofile'           => 1,
+                    'statusenabled'       => true,
+                    'noregistrasifk'      => $apdNorec,
+                    'noregistrasi'        => $noreg,
+                    'tglregistrasi'       => $now,
+                    'tglpelayanan'        => $now,
+                    'produkfk'            => PRODUK_BIAYA_REGISTRASI,
+                    'jumlah'              => 1,
+                    'hargasatuan'         => $biayaRegistrasi,
+                    'hargajual'           => $biayaRegistrasi,
+                    'harganetto'          => $biayaRegistrasi,
+                    'kelasfk'             => KELAS_FK,
+                    'kdkelompoktransaksi' => KELOMPOK_TRANSAKSI_TINDAKAN,
+                    'keteranganlain'      => 'BIAYA REGISTRASI',
+                    'stock'               => 0,
+                    'jasa'                => 0,
+                    'dpjp'                => $dokterId,
+                    'created_at'          => $now,
+                    'updated_at'          => $now,
+                ]);
+            } catch (Exception $billEx) {
+                error_log('Check-in tagihan dilewati: ' . $billEx->getMessage());
+                $noStruk = $noStruk ?: null;
+            }
         }
 
         if (tableHasColumn($pdo, 'pasiendaftar_t', 'ischeckin')) {
@@ -1101,14 +1470,22 @@ switch ($action) {
         }
         $pdo->commit();
 
+        $pesanCheckin = $perluTagihan
+            ? 'Check-in berhasil! Tagihan registrasi Rp ' . number_format($biayaRegistrasi, 0, ',', '.') . ' telah ditambahkan.'
+            : 'Check-in berhasil! Biaya registrasi ditanggung ' . $penjaminRegistrasi['label']
+              . ' — tidak ada tagihan.';
         respond(['success' => true,
-                 'message' => 'Check-in berhasil! Tagihan registrasi Rp ' . number_format(BIAYA_REGISTRASI, 0, ',', '.') . ' telah ditambahkan.',
+                 'message' => $pesanCheckin,
                  'data' => [
-                     'noregistrasi' => $noreg,
-                     'nostruk'      => $noStruk,
-                     'tgl_checkin'  => date('Y-m-d H:i:s'),
-                     'noantrian'    => $noAntrianFull,
-                     'norec_apd'    => $apdNorec,
+                     'noregistrasi'        => $noreg,
+                     'nostruk'             => $noStruk,
+                     'tgl_checkin'         => date('Y-m-d H:i:s'),
+                     'noantrian'           => $noAntrianFull,
+                     'norec_apd'           => $apdNorec,
+                     'penjamin'            => $penjaminRegistrasi['kode'],
+                     'penjamin_label'      => $penjaminRegistrasi['label'],
+                     'biaya_registrasi'    => $perluTagihan ? $biayaRegistrasi : 0,
+                     'ditanggung_asuransi' => penjaminDitanggungAsuransi($penjaminRegistrasi['kode']),
                  ]]);
         break;
 

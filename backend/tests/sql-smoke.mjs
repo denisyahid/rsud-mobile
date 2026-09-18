@@ -102,7 +102,7 @@ INSERT INTO statusperkawinan_m VALUES (1,'Belum Kawin',true);
 INSERT INTO golongandarah_m VALUES (1,'A',true);
 INSERT INTO pendidikan_m VALUES (1,'SD',true);
 INSERT INTO suku_m VALUES (1,'Sunda',true);
-INSERT INTO kelompokpasien_m VALUES (1,'Umum',true);
+INSERT INTO kelompokpasien_m VALUES (1,'Umum',true),(2,'BPJS Kesehatan',true),(4,'Asuransi PT KAI',true);
 INSERT INTO propinsi_m VALUES (33,'JAWA BARAT');
 INSERT INTO kotakabupaten_m VALUES (3204,'KAB. GARUT');
 INSERT INTO kecamatan_m VALUES (3204060,'MALANGBONG');
@@ -418,6 +418,81 @@ console.log('\n═══ i) RIWAYAT AKHIR (3 item: Dibatalkan + Aktif/Checkin) �
   const aktif = rw.rows.find(r => r.status === 'Aktif');
   ok(!!dibatalkan, 'status Dibatalkan ada');
   ok(!!aktif && aktif.ischeckin === true && aktif.noantrian_full === 'A-001', 'registrasi aktif ter-check-in dengan antrian A-001', JSON.stringify(aktif));
+}
+
+// ----------------------------------------------------------------------------
+// j) CHECK-IN PASIEN ASURANSI (KAI) — alur sama, TANPA tagihan registrasi
+//    (mencerminkan perubahan backend/api.php: penjamin dibaca dari
+//     pasiendaftar_t.objectkelompokpasienlastfk, tagihan hanya untuk Umum)
+// ----------------------------------------------------------------------------
+console.log('\n═══ j) CHECK-IN PASIEN KAI/ASURANSI (tanpa tagihan Rp 75.000) ═══');
+{
+  const KELOMPOK_KAI = 4;      // 'Asuransi PT KAI'
+  const KELOMPOK_UMUM = 1;
+  const pasienKaiId = 'pasien-kai-1';
+  const noRegKai = 'REGKAI0001';
+
+  await q(`INSERT INTO pasien_m (id,kdprofile,statusenabled,norec,nocm,namapasien,namaexternal,reportdisplay,
+      noidentitas,tempatlahir,tgllahir,objectjeniskelaminfk,nohp,notelepon,alamatlengkap,tgldaftar,qpasien)
+    VALUES ($1,1,true,'pk1','00000009','PASIEN KAI','PASIEN KAI','PASIEN KAI',
+      '3204010101900009','GARUT','1992-02-02',2,'081200000009','081200000009','JL. KAI',NOW(),'1')`, [pasienKaiId]);
+
+  // ── daftar_online dengan penjamin asuransi: kelompok pasien = id KAI ──
+  await q(`INSERT INTO pasiendaftar_t (norec,kdprofile,statusenabled,noregistrasi,nocmfk,tglregistrasi,
+      objectruanganlastfk,objectpegawaifk,objectkelompokpasienlastfk,objectkelasfk,statuspasien,created_at,ischeckin)
+    VALUES ('norec-kai',1,true,$1,$2,NOW(),100,500,$3,6,'Pasien Baru',NOW(),false)`,
+    [noRegKai, pasienKaiId, KELOMPOK_KAI]);
+  await q(`INSERT INTO antrianpasiendiperiksa_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,
+      objectruanganfk,objectpegawaifk,objectkelasfk,kelasfk,noantrian,prefixnoantrian,tglregistrasi,statusantrian,created_at)
+    VALUES ('norec-apd-kai',1,true,'norec-kai',$1,100,500,6,6,7,'A',NOW(),'0',NOW())`, [noRegKai]);
+
+  const regKai = await q(`SELECT pd.norec, pd.noregistrasi, pd.ischeckin, pd.objectkelompokpasienlastfk AS kelompok_pasien_id
+    FROM pasiendaftar_t pd WHERE pd.noregistrasi = $1 LIMIT 1`, [noRegKai]);
+  ok(regKai.rows[0].kelompok_pasien_id === KELOMPOK_KAI,
+    'registrasi KAI menyimpan kelompok pasien asuransi (objectkelompokpasienlastfk=4)');
+
+  // ── riwayat/tiket: penjamin terbaca dari id kelompok ──
+  const namaKelompok = await q(`SELECT kelompokpasien FROM kelompokpasien_m WHERE id = $1 AND statusenabled = true`,
+    [regKai.rows[0].kelompok_pasien_id]);
+  const nama = (namaKelompok.rows[0]?.kelompokpasien || '').toUpperCase();
+  const isAsuransi = /KAI|KERETA API|ASURANSI/.test(nama) && !/UMUM|BPJS|JKN/.test(nama);
+  ok(isAsuransi, `kelompok "${namaKelompok.rows[0]?.kelompokpasien}" dikenali sebagai penjamin asuransi`);
+
+  // ── check-in: perluTagihan = false → TIDAK insert struk/pelayanan ──
+  const perluTagihan = !isAsuransi;
+  const strukSebelum = await q(`SELECT COUNT(*)::int AS c FROM strukpelayanan_t WHERE noregistrasi = $1`, [noRegKai]);
+  ok(strukSebelum.rows[0].c === 0, 'belum ada struk untuk registrasi KAI');
+
+  if (perluTagihan) {
+    await q(`INSERT INTO strukpelayanan_t (norec,kdprofile,statusenabled,noregistrasifk,noregistrasi,tglstruk,
+        totalharusdibayar,nostruk,objectkelompoktransaksifk,created_at)
+      VALUES ('norec-struk-kai',1,true,'norec-kai',$1,NOW(),75000,'S000099999',2,NOW())`, [noRegKai]);
+  }
+  // check-in tetap jalan: antrian diaktifkan + ischeckin diset
+  await q(`UPDATE antrianpasiendiperiksa_t SET statusantrian = '1' WHERE norec = $1`, ['norec-apd-kai']);
+  await q(`UPDATE pasiendaftar_t SET ischeckin = true WHERE norec = $1`, ['norec-kai']);
+
+  const strukSesudah = await q(`SELECT COUNT(*)::int AS c FROM strukpelayanan_t WHERE noregistrasi = $1`, [noRegKai]);
+  const pelSesudah = await q(`SELECT COUNT(*)::int AS c FROM pelayananpasien_t WHERE noregistrasi = $1`, [noRegKai]);
+  ok(strukSesudah.rows[0].c === 0, 'check-in KAI TIDAK membuat strukpelayanan_t (tanpa tagihan Rp 75.000)');
+  ok(pelSesudah.rows[0].c === 0, 'check-in KAI TIDAK membuat tindakan pelayananpasien_t');
+
+  const akhir = await q(`SELECT pd.ischeckin, a.statusantrian, a.noantrian, a.prefixnoantrian
+    FROM pasiendaftar_t pd
+    LEFT JOIN antrianpasiendiperiksa_t a ON a.noregistrasifk = pd.norec AND a.statusenabled = true
+    WHERE pd.noregistrasi = $1`, [noRegKai]);
+  ok(akhir.rows[0].ischeckin === true, 'check-in KAI tetap berhasil (ischeckin=true)');
+  ok(akhir.rows[0].statusantrian === '1', 'antrian KAI tetap aktif setelah check-in (scan QR sama seperti Umum)');
+  ok(akhir.rows[0].prefixnoantrian + '-' + String(akhir.rows[0].noantrian).padStart(3, '0') === 'A-007',
+    'nomor antrian KAI terbit normal', JSON.stringify(akhir.rows[0]));
+
+  // ── pembanding: registrasi UMUM tetap ditagih ──
+  const namaUmum = await q(`SELECT kelompokpasien FROM kelompokpasien_m WHERE id = $1`, [KELOMPOK_UMUM]);
+  const isAsuransiUmum = /KAI|KERETA API|ASURANSI/.test((namaUmum.rows[0]?.kelompokpasien || '').toUpperCase())
+    && !/UMUM|BPJS|JKN/.test((namaUmum.rows[0]?.kelompokpasien || '').toUpperCase());
+  ok(!isAsuransiUmum, 'kelompok Umum tidak dianggap asuransi (tagihan registrasi tetap dibuat)');
+  const strukUmum = await q(`SELECT COUNT(*)::int AS c FROM strukpelayanan_t WHERE totalharusdibayar = 75000`);
+  ok(strukUmum.rows[0].c >= 1, 'check-in Umum tetap membuat struk Rp 75.000');
 }
 
 console.log(`\n══════════ HASIL: ${pass} lulus, ${fail} gagal ══════════`);
