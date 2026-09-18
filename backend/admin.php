@@ -46,6 +46,17 @@ function adminSessionActive()
     return function_exists('session_status') && session_status() === PHP_SESSION_ACTIVE;
 }
 
+/**
+ * Nama sesi PHP saat ini belum memakai nama khusus panel admin?
+ *
+ * Catatan: PHP tidak punya konstanta PHP_SESSION_NAME — nama sesi aktif dibaca
+ * lewat fungsi session_name() (mengembalikan session.name, default "PHPSESSID").
+ */
+function adminSessionNameBeda()
+{
+    return function_exists('session_name') && session_name() !== ADMIN_SESSION_NAME;
+}
+
 /** Mulai sesi dengan cookie yang aman (httponly, secure otomatis saat HTTPS). */
 function adminSessionStart()
 {
@@ -56,7 +67,7 @@ function adminSessionStart()
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https')
         || (($_SERVER['HTTP_X_FORWARDED_SSL'] ?? '') === 'on');
 
-    if (PHP_SESSION_NAME !== ADMIN_SESSION_NAME && !headers_sent()) {
+    if (adminSessionNameBeda() && !headers_sent()) {
         session_name(ADMIN_SESSION_NAME);
     }
     if (!headers_sent()) {

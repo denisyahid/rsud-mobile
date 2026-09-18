@@ -29,11 +29,18 @@ export const FILES = ['admin-config.php', 'admin.php', 'informasi.php'];
  * @param {string} o.sqliteFile
  * @param {string} o.uploadDir
  * @param {boolean} o.muatAdmin    require admin.php (default true)
+ * @param {boolean} o.testMode     RSUD_ADMIN_TEST_MODE (default true). Set false
+ *                                 untuk menguji jalur yang hanya jalan di web
+ *                                 server sungguhan, misalnya memulai sesi PHP.
+ * @param {boolean} o.jalankan     bila true, RSUD_ADMIN_NO_RUN tidak didefinisikan
+ *                                 sehingga admin.php langsung menjalankan
+ *                                 adminRun() persis seperti request web asli.
  */
 export function bootstrap(o = {}) {
   const driver = o.driver ?? 'sqlite';
   const sqliteFile = o.sqliteFile ?? SQLITE_FILE;
   const uploadDir = o.uploadDir ?? UPLOAD_DIR;
+  const testMode = o.testMode ?? true;
   return `<?php
 error_reporting(E_ALL);
 ini_set('display_errors', '1');
@@ -42,8 +49,8 @@ putenv('RSUD_ADMIN_SQLITE_FILE=${sqliteFile}');
 putenv('RSUD_ADMIN_UPLOAD_DIR=${uploadDir}');
 putenv('RSUD_ADMIN_DB_HOST=127.0.0.1');
 putenv('RSUD_ADMIN_DB_PORT=3306');
-define('RSUD_ADMIN_TEST_MODE', true);
-define('RSUD_ADMIN_NO_RUN', true);
+define('RSUD_ADMIN_TEST_MODE', ${testMode ? 'true' : 'false'});
+${o.jalankan ? '' : `define('RSUD_ADMIN_NO_RUN', true);`}
 $_SERVER['REQUEST_METHOD'] = 'GET';
 $_SERVER['REMOTE_ADDR']    = '127.0.0.1';
 $_SERVER['SCRIPT_NAME']    = '${WASM_ROOT}/admin.php';

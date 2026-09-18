@@ -159,6 +159,7 @@ Semua keluaran di-*escape*, jadi menempel HTML/JavaScript tidak akan dieksekusi.
 | Gambar tidak muncul di aplikasi | Nama file di DB ada tetapi berkasnya hilang (mis. folder upload tidak ikut tersalin). Unggah ulang gambarnya. |
 | Perubahan tidak terlihat di aplikasi | Tarik-turun/muat ulang tab Informasi, atau tutup-buka aplikasi. Halaman mengirim header anti-cache. |
 | Halaman informasi terasa lambat | Pastikan indeks tabel ada (sudah dibuat oleh file SQL) dan ukuran gambar wajar. |
+| *Fatal error: Undefined constant* saat `admin.php` dibuka | Sudah diperbaiki: kode lama membandingkan `PHP_SESSION_NAME` (konstanta itu tidak pernah ada di PHP) sebelum `session_name()` dipanggil. Sekarang nama sesi dibaca lewat `session_name()` (helper `adminSessionNameBeda()`), dan `npm run lint:const` menolak konstanta asing semacam ini sebelum naik ke server. |
 
 ---
 
@@ -170,9 +171,10 @@ dengan SQLite sementara, tetapi menjalankan kode produksi yang sama persis:
 ```bash
 cd backend/tests
 npm install
-npm test              # lint PHP + 134 uji panel/halaman + lint SQL
+npm test              # lint PHP + lint konstanta + 146 uji panel/halaman + lint SQL
 npm run test:admin    # hanya uji panel admin & informasi.php
 npm run lint:php      # periksa sintaks semua file .php
+npm run lint:const    # pastikan tidak ada konstanta PHP yang tidak dikenal
 npm run lint:sql      # periksa sintaks MySQL file .sql
 npm run sql:generate  # buat ulang sql/admin_info_rsudmobile.sql dari kode
 ```
@@ -181,7 +183,15 @@ Yang diuji antara lain: instalasi skema, render halaman, login (gagal/sukses/
 terkunci), penolakan CSRF, upload gambar sungguhan (termasuk pengecilan ukuran),
 penolakan berkas berbahaya, toggle & urutan, CRUD ketiga jenis konten,
 pengaturan halaman, ganti password, render seluruh halaman panel, penghapusan
-berkas, keabsahan file SQL, dan jalur cadangan saat database mati.
+berkas, keabsahan file SQL, jalur cadangan saat database mati, serta **sesi panel
+admin lewat jalur web server sungguhan** (nama sesi `RSUDADMINSESS`, cookie
+`Secure`/`HttpOnly`/`SameSite=Lax`, dan `admin.php` dibuka sebagai request penuh
+tanpa fatal error).
+
+`npm run lint:const` membandingkan setiap konstanta `HURUF_KAPITAL` di
+`backend/*.php` (hasil pembacaan AST) dengan daftar konstanta PHP sungguhan dari
+runtime PHP WebAssembly — penjaga agar bug seperti `PHP_SESSION_NAME` tidak
+terulang.
 
 ---
 

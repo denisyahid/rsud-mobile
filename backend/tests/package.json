@@ -4,8 +4,9 @@
   "description": "Pengujian backend RSUD Malangbong (PHP-WASM + SQLite/PGlite): panel admin informasi, logika penjamin KAI, dan SQL api.php",
   "main": "index.js",
   "scripts": {
-    "test": "npm run lint:php && npm run test:admin && npm run test:penjamin && npm run test:api && npm run lint:sql",
+    "test": "npm run lint:php && npm run lint:const && npm run test:admin && npm run test:penjamin && npm run test:api && npm run lint:sql",
     "lint:php": "node lint-all.mjs",
+    "lint:const": "node lint-constants.mjs",
     "test:admin": "node admin-smoke.mjs",
     "lint:sql": "node sql-lint.mjs",
     "sql:generate": "node generate-sql.mjs",

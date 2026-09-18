@@ -19,6 +19,7 @@
 //  12  hapus slide → berkas gambar ikut terhapus
 //  13  generator file SQL (backend/sql/admin_info_rsudmobile.sql)
 //  14  database mati → informasi.php tetap tampil (konten cadangan)
+//  15  sesi panel admin di jalur web server (nama sesi, cookie aman)
 //
 // Jalankan:  node backend/tests/admin-smoke.mjs
 // ============================================================================
@@ -801,6 +802,94 @@ let jsonMati = null;
 try { jsonMati = JSON.parse(r.stdout.trim()); } catch { jsonMati = null; }
 ok(jsonMati?.sumber === 'cadangan' && jsonMati?.slide?.length >= 1 && jsonMati?.panduan?.length >= 1,
   'mode JSON juga punya jalur cadangan', String(r.stdout).slice(0, 120));
+
+// ---------------------------------------------------------------------------
+console.log('\n15. Sesi panel admin (jalur web server sungguhan)');
+// ---------------------------------------------------------------------------
+// Langkah ini sengaja memakai RSUD_ADMIN_TEST_MODE = false supaya
+// adminSessionStart() benar-benar dieksekusi — jalur yang sebelumnya tidak
+// pernah tersentuh uji dan pernah fatal karena konstanta PHP_SESSION_NAME
+// yang tidak pernah ada di PHP.
+const phpSesi = await createPhp();
+
+r = await runStep(phpSesi, `
+  $_SERVER['HTTPS'] = 'on';
+  $namaAwal = session_name();
+  $bedaAwal = adminSessionNameBeda();
+  $mulai    = adminSessionStart();
+  $p        = session_get_cookie_params();
+  adminSessSet('admin_uji', 'jalan');
+  echo "@@HASIL@@" . json_encode([
+    'namaAwal'   => $namaAwal,
+    'bedaAwal'   => $bedaAwal,
+    'mulai'      => $mulai,
+    'nama'       => session_name(),
+    'namaTarget' => ADMIN_SESSION_NAME,
+    'bedaLagi'   => adminSessionNameBeda(),
+    'aktif'      => adminSessionActive(),
+    'secure'     => (bool) $p['secure'],
+    'httponly'   => (bool) $p['httponly'],
+    'samesite'   => $p['samesite'],
+    'path'       => $p['path'],
+    'isi'        => adminSessGet('admin_uji'),
+  ]);
+`, { testMode: false });
+const h15 = r.hasil ?? {};
+ok(h15.namaAwal === 'PHPSESSID' && h15.bedaAwal === true,
+  'nama sesi bawaan PHP terdeteksi berbeda dari nama panel');
+ok(h15.mulai === true && h15.aktif === true, 'adminSessionStart() memulai sesi tanpa fatal error');
+ok(h15.nama === h15.namaTarget && h15.bedaLagi === false,
+  'nama sesi diganti ke ' + (h15.namaTarget ?? '?') + ' (' + String(h15.nama) + ')');
+ok(h15.secure === true && h15.httponly === true && h15.samesite === 'Lax' && h15.path === '/',
+  'cookie sesi aman saat HTTPS (secure, httponly, SameSite=Lax, path=/)');
+ok(h15.isi === 'jalan', 'data sesi bisa ditulis lalu dibaca kembali');
+bersih(r, 'tidak ada warning PHP saat memulai sesi');
+
+r = await runStep(phpSesi, `
+  $_SERVER['HTTP_X_FORWARDED_PROTO'] = 'http';
+  $mulai = adminSessionStart();
+  $p     = session_get_cookie_params();
+  echo "@@HASIL@@" . json_encode([
+    'mulai'    => $mulai,
+    'secure'   => (bool) $p['secure'],
+    'httponly' => (bool) $p['httponly'],
+  ]);
+`, { testMode: false });
+ok(r.hasil?.mulai === true && r.hasil?.secure === false && r.hasil?.httponly === true,
+  'cookie tidak secure saat HTTP biasa, tetapi tetap httponly');
+
+r = await runStep(phpSesi, `
+  echo "@@HASIL@@" . json_encode([
+    'mulai' => adminSessionStart(),
+    'aktif' => adminSessionActive(),
+  ]);
+`);
+ok(r.hasil?.mulai === false && r.hasil?.aktif === false,
+  'mode uji tetap memakai sesi tiruan (sesi PHP tidak dimulai)');
+
+// Seluruh naskah admin.php dijalankan seperti request web sungguhan
+// (RSUD_ADMIN_NO_RUN tidak didefinisikan → adminRun() berjalan). Ini persis
+// jalur yang dulu fatal: "Undefined constant PHP_SESSION_NAME ... line 59".
+await runStep(phpSesi, `adminInstallSchema(true);`);
+r = await runStep(phpSesi, `
+  ob_start(); adminRun(); $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'panjang'   => strlen($html),
+    'login'     => strpos($html, 'name="password"') !== false,
+    'fatal'     => stripos($html, 'Fatal error') !== false || stripos($html, 'Uncaught') !== false,
+    'konstanta' => stripos($html, 'Undefined constant') !== false,
+    'namaSesi'  => session_name(),
+    'sesiAktif' => adminSessionActive(),
+  ]);
+`, { testMode: false, jalankan: true });
+const h15c = r.hasil ?? {};
+ok(h15c.fatal === false && h15c.konstanta === false,
+  'kunjungan ke admin.php sebagai request web tidak fatal error');
+ok(h15c.panjang > 5000 && h15c.login === true,
+  'halaman login panel admin terender (' + h15c.panjang + ' byte)');
+ok(h15c.sesiAktif === true && h15c.namaSesi === 'RSUDADMINSESS',
+  'sesi panel admin aktif dengan nama RSUDADMINSESS saat halaman dibuka');
+bersih(r, 'tidak ada warning PHP saat admin.php dijalankan sebagai request web');
 
 // ---------------------------------------------------------------------------
 console.log('\n═══ Hasil ═══');
