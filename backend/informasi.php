@@ -287,8 +287,9 @@ if (!$darDb || (empty($data['slide']) && empty($data['informasi']) && empty($dat
     }
 }
 
+// Catatan: data kartu informasi ($data['informasi']) sengaja tidak dirender lagi —
+// berita tampil lewat slider. Datanya tetap tersedia di ?format=json.
 $slideList     = $data['slide'];
-$infoList      = $data['informasi'];
 $panduanList   = $data['panduan'];
 $tarifList     = $data['tarif'];
 

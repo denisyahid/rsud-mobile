@@ -2178,6 +2178,7 @@ function adminViewDashboard()
         <div class="card-bd">
           <div class="row">
             <a class="btn btn-p" href="admin.php?page=slide&baru=1"><?php echo adminIco('plus', 16); ?> Tambah Slide</a>
+            <a class="btn" href="admin.php?page=tarif&baru=1"><?php echo adminIco('plus', 16); ?> Tambah Tarif</a>
             <a class="btn" href="admin.php?page=informasi&baru=1"><?php echo adminIco('plus', 16); ?> Tambah Informasi</a>
             <a class="btn" href="admin.php?page=panduan&baru=1"><?php echo adminIco('plus', 16); ?> Tambah Panduan</a>
           </div>
