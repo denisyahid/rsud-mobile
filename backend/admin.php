@@ -1040,7 +1040,7 @@ function adminSettingFields()
             ['kunci' => 'slider_interval',  'label' => 'Jeda geser slider (milidetik)', 'tipe' => 'number', 'ket' => 'Disarankan 4000 – 8000.'],
         ],
         'Judul Seksi' => [
-            ['kunci' => 'info_judul_seksi',    'label' => 'Judul seksi informasi', 'tipe' => 'text', 'ket' => 'Dipakai bila kartu informasi ditampilkan.'],
+            ['kunci' => 'info_judul_seksi',    'label' => 'Judul seksi informasi', 'tipe' => 'text', 'ket' => 'Cadangan: saat ini kartu informasi tidak dirender di informasi.php (berita lewat slider).'],
             ['kunci' => 'tarif_judul_seksi',   'label' => 'Judul tab tarif',       'tipe' => 'text', 'ket' => 'Contoh: Tarif Layanan.'],
             ['kunci' => 'panduan_judul_seksi', 'label' => 'Judul seksi panduan',   'tipe' => 'text', 'ket' => ''],
             ['kunci' => 'tampilkan_tarif',     'label' => 'Tampilkan tab tarif layanan', 'tipe' => 'switch', 'ket' => 'Isi tab diambil dari menu Tarif Layanan.'],
@@ -1060,7 +1060,7 @@ function adminSettingFields()
         ],
         'Footer & Pesan' => [
             ['kunci' => 'footer_teks',       'label' => 'Teks footer',                'tipe' => 'text', 'ket' => ''],
-            ['kunci' => 'pesan_kosong_info', 'label' => 'Pesan bila informasi kosong','tipe' => 'text', 'ket' => ''],
+            ['kunci' => 'pesan_kosong_info', 'label' => 'Pesan bila informasi kosong','tipe' => 'text', 'ket' => 'Cadangan: dipakai bila kartu informasi ditampilkan kembali.'],
             ['kunci' => 'pesan_kosong_slide','label' => 'Pesan bila slide kosong',    'tipe' => 'text', 'ket' => 'Kosongkan = seksi slider disembunyikan.'],
             ['kunci' => 'pesan_kosong_tarif','label' => 'Pesan bila tarif kosong',    'tipe' => 'text', 'ket' => ''],
             ['kunci' => 'tarif_catatan',     'label' => 'Catatan di bawah daftar tarif', 'tipe' => 'text', 'ket' => 'Contoh: tarif dapat berubah sewaktu-waktu. Kosongkan untuk menyembunyikan.'],
