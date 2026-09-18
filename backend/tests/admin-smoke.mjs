@@ -20,6 +20,7 @@
 //  13  generator file SQL (backend/sql/admin_info_rsudmobile.sql)
 //  14  database mati → informasi.php tetap tampil (konten cadangan)
 //  15  sesi panel admin di jalur web server (nama sesi, cookie aman)
+//  16  CRUD tarif layanan + tampilannya di tab Tarif informasi.php
 //
 // Jalankan:  node backend/tests/admin-smoke.mjs
 // ============================================================================
@@ -40,12 +41,16 @@ const bersih = (r, label) => ok(!PHP_NOISE.test(r.stdout) && !PHP_NOISE.test(Str
 
 const TOKEN = 'TOKEN-UJI-CSRF';
 /** Sesi login tiruan (mode uji) + token CSRF yang cocok. */
+// Sesi ditulis langsung ke $GLOBALS (bukan lewat variabel alias) supaya tidak
+// tertimpa bila kode yang diuji memakai nama variabel yang sama, misalnya
+// `foreach ($slideList as $i => $s)` di template informasi.php.
 const sesiLogin = (id = 1) => `
-  $s = &adminFakeSession();
-  $s['admin_id'] = ${id};
-  $s['admin_username'] = 'penguji';
-  $s['admin_last_active'] = time();
-  $s['admin_csrf'] = '${TOKEN}';
+  $GLOBALS['ADMIN_FAKE_SESSION'] = [
+    'admin_id'          => ${id},
+    'admin_username'    => 'penguji',
+    'admin_last_active' => time(),
+    'admin_csrf'        => '${TOKEN}',
+  ];
 `;
 const post = (obj) => `$_POST = ${phpArray(obj)};`;
 
@@ -86,6 +91,7 @@ let r = await runStep(php, `
     'slide'     => adminCount('slide'),
     'informasi' => adminCount('informasi'),
     'panduan'   => adminCount('panduan'),
+    'tarif'     => adminCount('tarif'),
     'aturan'    => (int) adminValue('SELECT COUNT(*) FROM pengaturan'),
     'user'      => adminOne('SELECT username, role, status_aktif FROM admin_users'),
     'uploadOk'  => adminUploadDirWritable(),
@@ -93,9 +99,10 @@ let r = await runStep(php, `
 `);
 const h1 = r.hasil ?? {};
 ok(h1.gagal === 0, 'semua langkah instalasi berhasil', JSON.stringify(h1.pesan));
-ok(h1.adaSemua === true, '6 tabel inti terbentuk');
+ok(h1.adaSemua === true, '7 tabel inti terbentuk');
 ok(h1.slide === 3 && h1.informasi === 3 && h1.panduan === 5, 'data contoh masuk (3 slide, 3 informasi, 5 panduan)',
   `${h1.slide}/${h1.informasi}/${h1.panduan}`);
+ok(h1.tarif === 10, 'data contoh tarif masuk (10 layanan)', h1.tarif);
 ok(h1.aturan >= 20, 'pengaturan default terisi (' + h1.aturan + ' kunci)');
 ok(h1.user?.username === 'rsudmalangbonggarut@gmail.com', 'akun admin awal sesuai permintaan', h1.user?.username);
 ok(h1.uploadOk === true, 'folder upload bisa ditulis');
@@ -123,6 +130,11 @@ r = await runStep(php, `
     'slider'     => substr_count($html, 'class="slide"'),
     'dots'       => substr_count($html, 'data-index='),
     'kartu'      => substr_count($html, '<article class="kartu">'),
+    'tab'        => substr_count($html, 'data-tab="'),
+    'panel'      => substr_count($html, 'role="tabpanel"'),
+    'tarifItem'  => substr_count($html, 'class="tarif-item"'),
+    'tarifGrup'  => substr_count($html, 'class="tarif-grup"'),
+    'rupiah'     => strpos($html, 'Rp 75.000') !== false,
     'dropdown'   => substr_count($html, '<details class="ak-item"'),
     'kontak'     => substr_count($html, 'wa.me/'),
     'headerLama' => stripos($html, 'Informasi &amp; panduan pemakaian aplikasi RSUD Malangbong') !== false
@@ -131,7 +143,7 @@ r = await runStep(php, `
     'judulSeksi' => stripos($html, 'Panduan Pemakaian Aplikasi') !== false,
     'footer'     => stripos($html, 'Kabupaten Garut') !== false,
     'judulSlide' => stripos($html, 'Pendaftaran Online Lebih Cepat') !== false,
-    'judulKartu' => stripos($html, 'Selamat datang di Aplikasi Mobile') !== false,
+    'judulTarif' => stripos($html, 'Konsultasi Dokter Spesialis') !== false,
     'judulPanduan' => stripos($html, 'Booking Kunjungan Poliklinik') !== false,
     'iframeOk'   => stripos($html, 'X-Frame-Options') !== false,
   ]);
@@ -140,14 +152,18 @@ const h2 = r.hasil ?? {};
 ok(h2.panjang > 15000, 'halaman terender (' + h2.panjang + ' byte)');
 ok(h2.slider === 3, '3 slide tampil di slider', h2.slider);
 ok(h2.dots === 3, '3 tombol navigasi (dots) slider', h2.dots);
-ok(h2.kartu === 3, '3 kartu informasi tampil', h2.kartu);
+ok(h2.tab === 3 && h2.panel === 3, 'navigasi 3 tab (Tarif, Panduan, Kontak) + 3 panel', `${h2.tab}/${h2.panel}`);
+ok(h2.tarifItem === 10, '10 baris tarif layanan tampil', h2.tarifItem);
+ok(h2.tarifGrup >= 5, 'tarif dikelompokkan per kategori (' + h2.tarifGrup + ' kelompok)', h2.tarifGrup);
+ok(h2.rupiah === true, 'tarif diformat sebagai rupiah (Rp 75.000)');
+ok(h2.kartu === 0, 'seksi kartu informasi sudah tidak dirender (berita lewat slider)', h2.kartu);
 ok(h2.dropdown === 5, '5 panduan tampil sebagai dropdown', h2.dropdown);
 ok(h2.kontak >= 1, 'tautan WhatsApp terpasang di seksi kontak');
 ok(h2.headerLama === false, 'teks header lama sudah tidak ada');
 ok(h2.adaHeader === false, 'header hijau disembunyikan (sesuai permintaan)');
 ok(h2.judulSeksi === true, 'judul seksi panduan dari pengaturan dipakai');
 ok(h2.footer === true, 'footer tampil');
-ok(h2.judulSlide && h2.judulKartu && h2.judulPanduan, 'judul dari database muncul di halaman');
+ok(h2.judulSlide && h2.judulTarif && h2.judulPanduan, 'judul dari database muncul di halaman');
 ok(h2.iframeOk === false, 'tidak mengirim X-Frame-Options (aman dimuat di iframe aplikasi)');
 bersih(r, 'tidak ada warning PHP saat render informasi.php');
 
@@ -446,33 +462,46 @@ ok(r.hasil?.tautanDitolak === true, 'tautan javascript: tidak ikut tersimpan');
 ok(String(r.hasil?.flashTautan).includes('tidak diizinkan'), 'pesan penolakan tautan berbahaya jelas',
   r.hasil?.flashTautan);
 
+// Kartu informasi tidak lagi dirender di informasi.php (berita tampil lewat
+// slider), jadi format teks/tanggal/escape diuji langsung pada fungsi produksinya
+// dan pada keluaran ?format=json yang masih memuat data kartu.
 r = await runStep(php, `
   ob_start(); require '${WASM_ROOT}/informasi.php'; $html = ob_get_clean();
+  $konten = (string) adminValue("SELECT konten FROM informasi WHERE judul = 'Kartu Uji dengan Daftar'");
+  // baris baru sungguhan seperti yang dikirim textarea browser
+  $baris  = "Pendaftaran dibuka pukul 07.00 WIB.\n- Bawa KTP\n- Bawa kartu BPJS\n**Datang 30 menit lebih awal.**";
+  $xss    = adminOne("SELECT kategori, judul FROM informasi WHERE judul LIKE '%script%' LIMIT 1");
   echo "@@HASIL@@" . json_encode([
-    'bullet'      => substr_count($html, '<li>') >= 2,
-    'bold'        => strpos($html, '<strong>Datang 30 menit lebih awal.</strong>') !== false,
-    'tanggal'     => strpos($html, '17 September 2026') !== false,
-    'kategori'    => strpos($html, '>Layanan<') !== false,
+    'bullet'      => substr_count(adminFormatTeks($baris), '<li>') >= 2,
+    'bold'        => strpos(adminFormatTeks($konten), '<strong>Datang 30 menit lebih awal.</strong>') !== false,
+    'tanggal'     => adminTanggalIndo('2026-09-17') === '17 September 2026',
+    'kategori'    => $xss !== null && $xss['kategori'] === '<b>Kategori</b>',
+    'escapeJudul' => strpos(e($xss['judul'] ?? ''), '<script>') === false
+                     && strpos(e($xss['judul'] ?? ''), '&lt;script&gt;') !== false,
+    'escapeKat'   => strpos(e($xss['kategori'] ?? ''), '&lt;b&gt;Kategori&lt;/b&gt;') !== false,
     'dropdown'    => substr_count($html, '<details class="ak-item"'),
-    'kartuJml'    => substr_count($html, '<article class="kartu">'),
     'judulPanduan'=> strpos($html, 'Panduan Uji Coba (Revisi)') !== false,
-    'escape'      => strpos($html, '<script>alert') === false
-                     && strpos($html, '<img src=x') === false
-                     && strpos($html, '<b>Kategori</b>') === false
-                     && strpos($html, '&lt;script&gt;') !== false
-                     && strpos($html, '&lt;b&gt;Kategori&lt;/b&gt;') !== false,
-    'terpotong'   => strpos($html, 'terpotong') !== false,
+    'kartuHtml'   => substr_count($html, '<article class="kartu">'),
   ]);
 `);
-ok(r.hasil?.bullet === true, 'baris "-" dirender menjadi daftar bullet');
-ok(r.hasil?.bold === true, 'teks **tebal** dirender sebagai <strong>');
+ok(r.hasil?.bullet === true, 'baris "-" diformat menjadi daftar bullet');
+ok(r.hasil?.bold === true, 'teks **tebal** diformat sebagai <strong>');
 ok(r.hasil?.tanggal === true, 'tanggal diformat ke bahasa Indonesia');
-ok(r.hasil?.kategori === true, 'label kategori tampil pada kartu');
+ok(r.hasil?.kategori === true, 'label kategori tersimpan apa adanya di database');
+ok(r.hasil?.escapeJudul === true && r.hasil?.escapeKat === true, 'output di-escape sehingga HTML mentah tidak lolos (aman XSS)');
 ok(r.hasil?.dropdown === 6, 'jumlah dropdown panduan bertambah jadi 6', r.hasil?.dropdown);
-ok(r.hasil?.kartuJml === 5, 'jumlah kartu informasi bertambah jadi 5', r.hasil?.kartuJml);
+ok(r.hasil?.kartuHtml === 0, 'kartu informasi tetap tidak dirender setelah data ditambah', r.hasil?.kartuHtml);
 ok(r.hasil?.judulPanduan === true, 'judul panduan hasil revisi tampil');
-ok(r.hasil?.escape === true, 'tidak ada HTML mentah yang lolos (aman XSS)');
 bersih(r, 'tidak ada warning PHP saat render konten baru');
+
+// data kartu informasi masih tersedia untuk pemakaian native lewat ?format=json
+r = await runStep(php, `$_GET['format'] = 'json'; require '${WASM_ROOT}/informasi.php';`);
+let jsonKartu = null;
+try { jsonKartu = JSON.parse(r.stdout.trim()); } catch { jsonKartu = null; }
+ok(jsonKartu?.informasi?.length === 5, 'mode JSON tetap memuat 5 kartu informasi',
+  String(jsonKartu?.informasi?.length));
+ok(String(jsonKartu?.informasi?.find(x => String(x.judul).includes('script'))?.judul ?? '').includes('<script>'),
+  'isi JSON mentah (escape dilakukan saat dirender, bukan saat disimpan)');
 
 // validasi kolom wajib & tanggal rusak
 r = await runStep(php, `
@@ -515,6 +544,7 @@ r = await runStep(php, `
       'warna_utama' => '#0f766e', 'tampilkan_header' => '1', 'tampilkan_slider' => '1',
       'slider_autoplay' => '0', 'slider_interval' => '7000',
       'info_judul_seksi' => 'Berita & Pengumuman', 'panduan_judul_seksi' => 'Cara Pakai Aplikasi',
+      'tarif_judul_seksi' => 'Daftar Biaya', 'tampilkan_tarif' => '1',
       'kontak_judul_seksi' => 'Hubungi Kami', 'tampilkan_panduan' => '1', 'panduan_buka_satu' => '1',
       'tampilkan_kontak' => '1', 'alamat' => 'Jl. Raya Malangbong No. 1', 'jam_layanan' => '24 Jam',
       'telepon' => '(0262) 123456', 'whatsapp' => '081385831193', 'email' => 'rsudmalangbonggarut@gmail.com',
@@ -546,7 +576,7 @@ r = await runStep(php, `
     'header'    => strpos($html, '<header class="header">') !== false,
     'subjudul'  => strpos($html, 'Layanan Digital Pasien') !== false,
     'warna'     => strpos($html, '--brand:#0f766e') !== false,
-    'seksi'     => strpos($html, 'Berita &amp; Pengumuman') !== false || strpos($html, 'Berita & Pengumuman') !== false,
+    'seksi'     => strpos($html, 'Daftar Biaya') !== false,
     'autoplay'  => strpos($html, 'data-autoplay="0"') !== false,
     'interval'  => strpos($html, 'data-interval="7000"') !== false,
     'telepon'   => strpos($html, '(0262) 123456') !== false,
@@ -557,7 +587,7 @@ r = await runStep(php, `
 ok(r.hasil?.header === true, 'header tampil setelah diaktifkan');
 ok(r.hasil?.subjudul === true, 'subjudul dari pengaturan dipakai');
 ok(r.hasil?.warna === true, 'warna tema dari pengaturan dipakai');
-ok(r.hasil?.seksi === true, 'judul seksi dari pengaturan dipakai');
+ok(r.hasil?.seksi === true, 'judul tab tarif dari pengaturan dipakai');
 ok(r.hasil?.autoplay === true && r.hasil?.interval === true, 'setelan slider diteruskan ke JavaScript');
 ok(r.hasil?.telepon === true && r.hasil?.wa === true && r.hasil?.peta === true, 'kontak lengkap tampil');
 bersih(r, 'tidak ada warning PHP setelah perubahan pengaturan');
@@ -567,7 +597,9 @@ await runStep(php, `
   ${sesiLogin()}
   $_SERVER['REQUEST_METHOD'] = 'POST';
   $_POST = ['aksi' => 'pengaturan_simpan', 'page' => 'pengaturan', 'csrf_token' => '${TOKEN}',
-            'set' => ['tampilkan_header' => '1', 'warna_utama' => '#1b5e20', 'slider_autoplay' => '1', 'slider_interval' => '5000']];
+            'set' => ['tampilkan_header' => '1', 'warna_utama' => '#1b5e20', 'slider_autoplay' => '1', 'slider_interval' => '5000',
+                      'tampilkan_slider' => '1', 'tampilkan_tarif' => '1', 'tampilkan_panduan' => '1',
+                      'panduan_buka_satu' => '1', 'tampilkan_kontak' => '1']];
   adminHandlePost();
   adminQ('UPDATE pengaturan SET nilai = ? WHERE kunci = ?', ['0', 'tampilkan_header']);
 `);
@@ -628,7 +660,7 @@ ok(r.hasil?.nama_lengkap === 'Petugas Informasi RSUD' && String(r.hasil?.email).
 // ---------------------------------------------------------------------------
 console.log('\n11. Render semua halaman panel admin');
 // ---------------------------------------------------------------------------
-for (const page of ['dashboard', 'slide', 'informasi', 'panduan', 'pengaturan', 'akun', 'sistem']) {
+for (const page of ['dashboard', 'slide', 'informasi', 'panduan', 'tarif', 'pengaturan', 'akun', 'sistem']) {
   r = await runStep(php, `
     ${sesiLogin()}
     $_GET['page'] = '${page}';
@@ -741,13 +773,13 @@ r = await runStep(php, `
   ]);
 `);
 const h13 = r.hasil ?? {};
-ok(h13.createDb === 1 && h13.tabel === 6, 'dump membuat database + 6 tabel', JSON.stringify(h13.namaTabel ?? h13));
-ok(['admin_users','pengaturan','slide','informasi','panduan','admin_log'].every(t => (h13.namaTabel ?? []).includes(t)),
-  'keenam tabel inti ada di file SQL');
+ok(h13.createDb === 1 && h13.tabel === 7, 'dump membuat database + 7 tabel', JSON.stringify(h13.namaTabel ?? h13));
+ok(['admin_users','pengaturan','slide','informasi','panduan','tarif','admin_log'].every(t => (h13.namaTabel ?? []).includes(t)),
+  'ketujuh tabel inti ada di file SQL');
 ok(h13.setting >= 20 && h13.user === 1, 'dump berisi pengaturan default + akun admin');
 ok(h13.contoh >= 11, 'data contoh dilindungi NOT EXISTS (idempoten)', h13.contoh);
 ok(h13.hash === true, 'password admin disimpan sebagai hash bcrypt, bukan teks');
-ok(h13.innodb === 6 && h13.utf8 === true, 'tabel memakai InnoDB + utf8mb4');
+ok(h13.innodb === 7 && h13.utf8 === true, 'tabel memakai InnoDB + utf8mb4');
 
 // file SQL di repo harus selalu sinkron dengan kode panel
 const dump = await runStep(php, `echo adminSqlDump();`, { driver: 'mysql' });
@@ -772,7 +804,7 @@ r = await runStep(php, `
     'panjang'  => strlen($html),
     'catatan'  => strpos($html, 'informasi cadangan') !== false,
     'slide'    => substr_count($html, 'class="slide"'),
-    'kartu'    => substr_count($html, '<article class="kartu">'),
+    'tarif'    => substr_count($html, 'class="tarif-item"'),
     'panduan'  => substr_count($html, '<details class="ak-item"'),
     'kontak'   => strpos($html, 'wa.me/') !== false,
     'fatal'    => stripos($html, 'Fatal error') !== false || stripos($html, 'Uncaught') !== false,
@@ -781,7 +813,7 @@ r = await runStep(php, `
 const h14 = r.hasil ?? {};
 ok(h14.panjang > 10000, 'halaman tetap terender tanpa database (' + h14.panjang + ' byte)');
 ok(h14.catatan === true, 'ada catatan halus bahwa konten cadangan dipakai');
-ok(h14.slide >= 1 && h14.kartu >= 1 && h14.panduan >= 1, 'konten cadangan lengkap (slide, kartu, panduan)');
+ok(h14.slide >= 1 && h14.tarif >= 1 && h14.panduan >= 1, 'konten cadangan lengkap (slide, tarif, panduan)');
 ok(h14.kontak === true, 'kontak default tetap tampil');
 ok(h14.fatal === false, 'tidak ada fatal error yang bocor ke pasien');
 bersih(r, 'tidak ada warning PHP saat database mati');
@@ -890,6 +922,154 @@ ok(h15c.panjang > 5000 && h15c.login === true,
 ok(h15c.sesiAktif === true && h15c.namaSesi === 'RSUDADMINSESS',
   'sesi panel admin aktif dengan nama RSUDADMINSESS saat halaman dibuka');
 bersih(r, 'tidak ada warning PHP saat admin.php dijalankan sebagai request web');
+
+// ---------------------------------------------------------------------------
+console.log('\n16. CRUD tarif layanan');
+// ---------------------------------------------------------------------------
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_SERVER['REQUEST_METHOD'] = 'POST';
+  $sebelum = adminCount('tarif');
+
+  // tambah: tarif ditulis seperti yang diketik admin (boleh pakai titik ribuan)
+  ${post({ aksi: 'simpan', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN,
+           kategori: 'Rawat Jalan', nama_layanan: 'Konsultasi Uji Tarif',
+           satuan: 'per kunjungan', tarif: 'Rp 1.250.000', keterangan: 'Uji coba panel admin',
+           status_aktif: '1' })}
+  adminHandlePost();
+  $id = (int) adminValue('SELECT id FROM tarif WHERE nama_layanan = ?', ['Konsultasi Uji Tarif']);
+
+  // kategori kosong → pakai default entitas ("Lainnya")
+  ${post({ aksi: 'simpan', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN,
+           kategori: '', nama_layanan: 'Tarif Tanpa Kategori', tarif: '50000', status_aktif: '1' })}
+  adminHandlePost();
+
+  // nama layanan kosong harus ditolak
+  adminTakeFlash();
+  ${post({ aksi: 'simpan', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN,
+           kategori: 'IGD', nama_layanan: '   ', tarif: '10000', status_aktif: '1' })}
+  adminHandlePost();
+  $flashKosong = adminTakeFlash();
+
+  echo "@@HASIL@@" . json_encode([
+    'tambah'    => adminCount('tarif') - $sebelum,
+    'id'        => $id,
+    'tarif'     => adminValue('SELECT tarif FROM tarif WHERE id = ?', [$id]),
+    'satuan'    => adminValue('SELECT satuan FROM tarif WHERE id = ?', [$id]),
+    'kategoriDefault' => adminValue("SELECT kategori FROM tarif WHERE nama_layanan = 'Tarif Tanpa Kategori'"),
+    'wajib'     => $flashKosong[0]['pesan'] ?? '',
+    'log'       => (int) adminValue("SELECT COUNT(*) FROM admin_log WHERE aktivitas = 'tambah_tarif'"),
+  ]);
+`);
+const idTarif = r.hasil?.id;
+ok(r.hasil?.tambah === 2, 'dua tarif baru tersimpan (yang tidak valid ditolak)', r.hasil?.tambah);
+ok(String(r.hasil?.tarif) === '1250000', 'teks "Rp 1.250.000" disimpan sebagai angka 1250000', r.hasil?.tarif);
+ok(r.hasil?.satuan === 'per kunjungan', 'satuan tarif tersimpan');
+ok(r.hasil?.kategoriDefault === 'Lainnya', 'kategori kosong memakai default "Lainnya"', r.hasil?.kategoriDefault);
+ok(String(r.hasil?.wajib).includes('wajib'), 'nama layanan kosong ditolak');
+ok(r.hasil?.log >= 1, 'aktivitas tambah tarif tercatat di admin_log');
+
+// ubah + pindah urutan + nonaktifkan
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_SERVER['REQUEST_METHOD'] = 'POST';
+  ${post({ aksi: 'simpan', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN,
+           kategori: 'Laboratorium', nama_layanan: 'Konsultasi Uji Tarif (Revisi)',
+           satuan: 'per pemeriksaan', tarif: '85000', keterangan: '', status_aktif: '1' })}
+  $_POST['id'] = ${idTarif};
+  adminHandlePost();
+
+  $posisiAwal = array_search(${idTarif}, array_map(fn($x) => (int) $x['id'], adminRows('tarif')), true);
+  ${post({ aksi: 'urutan_naik', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN })}
+  $_POST['id'] = ${idTarif};
+  adminHandlePost();
+  $posisiNaik = array_search(${idTarif}, array_map(fn($x) => (int) $x['id'], adminRows('tarif')), true);
+
+  ${post({ aksi: 'toggle', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN })}
+  $_POST['id'] = ${idTarif};
+  adminHandlePost();
+
+  echo "@@HASIL@@" . json_encode([
+    'judul'   => adminValue('SELECT nama_layanan FROM tarif WHERE id = ?', [${idTarif}]),
+    'tarif'   => adminValue('SELECT tarif FROM tarif WHERE id = ?', [${idTarif}]),
+    'kategori'=> adminValue('SELECT kategori FROM tarif WHERE id = ?', [${idTarif}]),
+    'naik'    => $posisiNaik < $posisiAwal,
+    'aktif'   => (int) adminValue('SELECT status_aktif FROM tarif WHERE id = ?', [${idTarif}]),
+    'aktifDb' => adminCount('tarif', true),
+  ]);
+`);
+ok(String(r.hasil?.judul).includes('Revisi'), 'tarif bisa diperbarui');
+ok(String(r.hasil?.tarif) === '85000' && r.hasil?.kategori === 'Laboratorium', 'nilai & kategori baru tersimpan');
+ok(r.hasil?.naik === true, 'urutan tarif bisa dinaikkan');
+ok(r.hasil?.aktif === 0, 'tarif bisa dinonaktifkan tanpa dihapus');
+
+// efeknya ke halaman informasi: tarif nonaktif tidak tampil
+r = await runStep(php, `
+  ob_start(); require '${WASM_ROOT}/informasi.php'; $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'revisi'  => strpos($html, 'Konsultasi Uji Tarif') !== false,
+    'tanpaKat'=> strpos($html, 'Tarif Tanpa Kategori') !== false,
+    'rupiah'  => strpos($html, 'Rp 50.000') !== false,
+    'cari'    => strpos($html, 'id="cariTarif"') !== false,
+  ]);
+`);
+ok(r.hasil?.revisi === false, 'tarif nonaktif tidak ditampilkan ke pasien');
+ok(r.hasil?.tanpaKat === true && r.hasil?.rupiah === true, 'tarif aktif tampil dengan format rupiah',
+  JSON.stringify(r.hasil));
+ok(r.hasil?.cari === true, 'kotak pencarian tarif tersedia', JSON.stringify(r.hasil));
+bersih(r, 'tidak ada warning PHP saat merender daftar tarif');
+
+// aktifkan lagi, lalu hapus
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_SERVER['REQUEST_METHOD'] = 'POST';
+  ${post({ aksi: 'toggle', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN })}
+  $_POST['id'] = ${idTarif};
+  adminHandlePost();
+  ob_start(); require '${WASM_ROOT}/informasi.php'; $htmlAktif = ob_get_clean();
+
+  $adaSebelumHapus = adminCount('tarif');
+  ${post({ aksi: 'hapus', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN })}
+  $_POST['id'] = ${idTarif};
+  adminHandlePost();
+  $idLain = (int) adminValue("SELECT id FROM tarif WHERE nama_layanan = 'Tarif Tanpa Kategori'");
+  ${post({ aksi: 'hapus', entitas: 'tarif', page: 'tarif', id: 0, csrf_token: TOKEN })}
+  adminHandlePost();
+
+  echo "@@HASIL@@" . json_encode([
+    'tampilSaatAktif' => strpos($htmlAktif, 'Konsultasi Uji Tarif (Revisi)') !== false,
+    'sisa'            => adminCount('tarif'),
+    'berkurang'       => $adaSebelumHapus - adminCount('tarif'),
+    'hapusTanpaId'    => adminCount('tarif') === $adaSebelumHapus - 1,
+    'hapusLog'        => (int) adminValue("SELECT COUNT(*) FROM admin_log WHERE aktivitas = 'hapus_tarif'"),
+  ]);
+`);
+ok(r.hasil?.tampilSaatAktif === true, 'tarif aktif kembali tampil di halaman informasi',
+  JSON.stringify(r.hasil));
+ok(r.hasil?.berkurang === 1, 'satu tarif terhapus', JSON.stringify(r.hasil));
+ok(r.hasil?.hapusTanpaId === true, 'hapus tanpa ID tidak menghapus apa pun', JSON.stringify(r.hasil));
+ok(r.hasil?.hapusLog >= 1, 'aktivitas hapus tarif tercatat di admin_log', JSON.stringify(r.hasil));
+
+// halaman panel tarif: form tambah + tabel daftar
+r = await runStep(php, `
+  ${sesiLogin()}
+  $_GET['page'] = 'tarif'; $_GET['baru'] = '1';
+  ob_start(); adminRun(); $html = ob_get_clean();
+  echo "@@HASIL@@" . json_encode([
+    'form'      => substr_count($html, 'name="nama_layanan"') === 1,
+    'tarifInput'=> substr_count($html, 'name="tarif"') >= 1,
+    'datalist'  => strpos($html, 'daftar-kategori-tarif') !== false,
+    'tabel'     => substr_count($html, '<table class="tbl">'),
+    'rupiah'    => strpos($html, 'Rp 75.000') !== false,
+    'menu'      => strpos($html, 'Tarif Layanan') !== false,
+  ]);
+`);
+ok(r.hasil?.form === true && r.hasil?.tarifInput === true, 'form tambah tarif memiliki kolom nama layanan & tarif');
+ok(r.hasil?.datalist === true, 'pilihan kategori tarif tersedia di form');
+ok(r.hasil?.tabel === 1, 'tabel daftar tarif dirender');
+ok(r.hasil?.rupiah === true, 'tarif di panel admin diformat rupiah');
+ok(r.hasil?.menu === true, 'menu Tarif Layanan ada di panel admin');
+bersih(r, 'halaman tarif bebas warning PHP');
 
 // ---------------------------------------------------------------------------
 console.log('\n═══ Hasil ═══');

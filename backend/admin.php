@@ -794,7 +794,29 @@ function adminEntities()
             'wajib'    => ['judul'],
             'panjang'  => ['judul' => 180, 'ikon' => 40],
         ],
+        'tarif' => [
+            'tabel'    => 'tarif',
+            'label'    => 'Tarif Layanan',
+            'labelBny' => 'Tarif Layanan',
+            'prefix'   => 'tarif',
+            'punyaGambar' => false,
+            'kolomJudul'  => 'nama_layanan',   // kolom yang mewakili "judul" baris
+            'urutanSql'   => 'kategori ASC, urutan ASC, id ASC',
+            'kolom'    => ['kategori', 'nama_layanan', 'satuan', 'tarif', 'keterangan', 'urutan', 'status_aktif'],
+            'wajib'    => ['nama_layanan'],
+            'panjang'  => ['kategori' => 60, 'nama_layanan' => 200, 'satuan' => 60, 'keterangan' => 255],
+            'kategoriDefault' => 'Lainnya',
+        ],
     ];
+}
+
+/** Kolom yang berperan sebagai "judul" sebuah baris (untuk log & konfirmasi hapus). */
+function adminJudulBaris($row)
+{
+    if (!is_array($row)) return '';
+    if (isset($row['judul']))          return (string) $row['judul'];
+    if (isset($row['nama_layanan']))   return (string) $row['nama_layanan'];
+    return '';
 }
 
 function adminEntity($key)
@@ -889,9 +911,14 @@ function adminPrepareData($entityKey, array $input, $id = 0)
             continue;
         }
 
+        if ($kolom === 'tarif') {
+            $data['tarif'] = adminAngkaDariTeks($nilai);
+            continue;
+        }
+
         if ($kolom === 'kategori') {
             $nilai = trim($nilai);
-            if ($nilai === '') $nilai = 'Pengumuman';
+            if ($nilai === '') $nilai = $e['kategoriDefault'] ?? 'Pengumuman';
             $data['kategori'] = adminLimit($nilai, $e['panjang']['kategori'] ?? 60);
             continue;
         }
@@ -906,7 +933,7 @@ function adminPrepareData($entityKey, array $input, $id = 0)
 
         // teks biasa
         $nilai = preg_replace('/\r\n?/', "\n", $nilai) ?? $nilai;
-        if (in_array($kolom, ['judul', 'subjudul'], true)) $nilai = trim($nilai);
+        if (in_array($kolom, ['judul', 'subjudul', 'nama_layanan', 'satuan'], true)) $nilai = trim($nilai);
         $max = $e['panjang'][$kolom] ?? null;
         $data[$kolom] = $max ? adminLimit($nilai, $max) : $nilai;
     }
@@ -1013,12 +1040,14 @@ function adminSettingFields()
             ['kunci' => 'slider_interval',  'label' => 'Jeda geser slider (milidetik)', 'tipe' => 'number', 'ket' => 'Disarankan 4000 – 8000.'],
         ],
         'Judul Seksi' => [
-            ['kunci' => 'info_judul_seksi',    'label' => 'Judul seksi informasi', 'tipe' => 'text', 'ket' => ''],
+            ['kunci' => 'info_judul_seksi',    'label' => 'Judul seksi informasi', 'tipe' => 'text', 'ket' => 'Dipakai bila kartu informasi ditampilkan.'],
+            ['kunci' => 'tarif_judul_seksi',   'label' => 'Judul tab tarif',       'tipe' => 'text', 'ket' => 'Contoh: Tarif Layanan.'],
             ['kunci' => 'panduan_judul_seksi', 'label' => 'Judul seksi panduan',   'tipe' => 'text', 'ket' => ''],
-            ['kunci' => 'tampilkan_panduan',   'label' => 'Tampilkan seksi panduan (dropdown)', 'tipe' => 'switch', 'ket' => ''],
-            ['kunci' => 'panduan_buka_satu',   'label' => 'Hanya satu dropdown terbuka',        'tipe' => 'switch', 'ket' => 'Bila mati, beberapa dropdown bisa terbuka bersamaan.'],
+            ['kunci' => 'tampilkan_tarif',     'label' => 'Tampilkan tab tarif layanan', 'tipe' => 'switch', 'ket' => 'Isi tab diambil dari menu Tarif Layanan.'],
+            ['kunci' => 'tampilkan_panduan',   'label' => 'Tampilkan tab panduan', 'tipe' => 'switch', 'ket' => ''],
+            ['kunci' => 'panduan_buka_satu',   'label' => 'Hanya satu dropdown terbuka', 'tipe' => 'switch', 'ket' => 'Bila mati, beberapa dropdown bisa terbuka bersamaan.'],
             ['kunci' => 'kontak_judul_seksi',  'label' => 'Judul seksi kontak',    'tipe' => 'text', 'ket' => ''],
-            ['kunci' => 'tampilkan_kontak',    'label' => 'Tampilkan seksi kontak','tipe' => 'switch', 'ket' => ''],
+            ['kunci' => 'tampilkan_kontak',    'label' => 'Tampilkan tab kontak',  'tipe' => 'switch', 'ket' => ''],
         ],
         'Kontak & Layanan' => [
             ['kunci' => 'alamat',      'label' => 'Alamat',                    'tipe' => 'text',   'ket' => ''],
@@ -1033,6 +1062,8 @@ function adminSettingFields()
             ['kunci' => 'footer_teks',       'label' => 'Teks footer',                'tipe' => 'text', 'ket' => ''],
             ['kunci' => 'pesan_kosong_info', 'label' => 'Pesan bila informasi kosong','tipe' => 'text', 'ket' => ''],
             ['kunci' => 'pesan_kosong_slide','label' => 'Pesan bila slide kosong',    'tipe' => 'text', 'ket' => 'Kosongkan = seksi slider disembunyikan.'],
+            ['kunci' => 'pesan_kosong_tarif','label' => 'Pesan bila tarif kosong',    'tipe' => 'text', 'ket' => ''],
+            ['kunci' => 'tarif_catatan',     'label' => 'Catatan di bawah daftar tarif', 'tipe' => 'text', 'ket' => 'Contoh: tarif dapat berubah sewaktu-waktu. Kosongkan untuk menyembunyikan.'],
         ],
     ];
 }
@@ -1165,6 +1196,20 @@ function adminInstallSchema($isiContoh = true)
             $laporan[] = ['label' => 'Data contoh informasi', 'ok' => true, 'pesan' => 'sudah ada, dilewati'];
         }
 
+        if ((int) adminValue('SELECT COUNT(*) FROM tarif', [], 0) === 0) {
+            $contohTarif = adminContohTarif();
+            foreach ($contohTarif as $i => $t) {
+                adminQ(
+                    'INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)',
+                    [$t['kategori'], $t['nama_layanan'], $t['satuan'], (int) $t['tarif'], $t['keterangan'], ($i + 1) * 10, adminNow(), adminNow()]
+                );
+            }
+            $laporan[] = ['label' => 'Data contoh tarif', 'ok' => true, 'pesan' => count($contohTarif) . ' layanan (angka contoh — sesuaikan tarif resmi)'];
+        } else {
+            $laporan[] = ['label' => 'Data contoh tarif', 'ok' => true, 'pesan' => 'sudah ada, dilewati'];
+        }
+
         if ((int) adminValue('SELECT COUNT(*) FROM slide', [], 0) === 0) {
             $contohSlide = adminContohSlide();
             foreach ($contohSlide as $i => $s) {
@@ -1194,7 +1239,7 @@ function adminHandlePost()
     $aksi = strtolower(trim((string) adminPost('aksi', '')));
     $page = adminPost('page', 'dashboard');
 
-    $bolehPage = ['dashboard', 'slide', 'informasi', 'panduan', 'pengaturan', 'akun', 'sistem', 'login'];
+    $bolehPage = ['dashboard', 'slide', 'informasi', 'panduan', 'tarif', 'pengaturan', 'akun', 'sistem', 'login'];
     if (!in_array($page, $bolehPage, true)) $page = 'dashboard';
 
     $kembali = ($aksi === 'login' || $page === 'login') ? 'admin.php?page=login' : 'admin.php?page=' . $page;
@@ -1260,7 +1305,7 @@ function adminHandlePost()
 
                 $newId = adminSaveRow($entitas, $data, $id);
                 adminLog($id > 0 ? 'ubah_' . $entitas : 'tambah_' . $entitas,
-                    ($id > 0 ? 'id=' . $id : 'id=' . $newId) . ' judul=' . adminLimit($data['judul'] ?? '', 60));
+                    ($id > 0 ? 'id=' . $id : 'id=' . $newId) . ' judul=' . adminLimit(adminJudulBaris($data), 60));
                 adminFlash('sukses', $e['label'] . ' berhasil ' . ($id > 0 ? 'diperbarui' : 'ditambahkan') . '.');
                 adminRedirect('admin.php?page=' . $entitas);
                 return;
@@ -1278,8 +1323,8 @@ function adminHandlePost()
                     adminDeleteImage($row['gambar']);
                 }
                 adminDeleteRow($entitas, $id);
-                adminLog('hapus_' . $entitas, 'id=' . $id . ' judul=' . adminLimit($row['judul'] ?? '', 60));
-                adminFlash('sukses', $e['label'] . ' "' . adminLimit($row['judul'] ?? '', 40) . '" dihapus.');
+                adminLog('hapus_' . $entitas, 'id=' . $id . ' judul=' . adminLimit(adminJudulBaris($row), 60));
+                adminFlash('sukses', $e['label'] . ' "' . adminLimit(adminJudulBaris($row), 40) . '" dihapus.');
                 adminRedirect('admin.php?page=' . $entitas);
                 return;
             }
@@ -1471,6 +1516,7 @@ function adminIcoPaths()
         'riwayat'   => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/>',
         'obat'      => '<rect x="2.5" y="9" width="19" height="6" rx="3"/><path d="M12 9v6"/>',
         'bayar'     => '<rect x="2.5" y="5" width="19" height="14" rx="2.2"/><path d="M2.5 10h19M6.5 15h4"/>',
+        'tarif'     => '<path d="M20.5 12.5l-8 8a1.6 1.6 0 01-2.3 0l-6.2-6.2a1.6 1.6 0 01-.5-1.2V4.8A1.3 1.3 0 014.8 3.5h8.3c.4 0 .9.2 1.2.5l6.2 6.2c.6.6.6 1.7 0 2.3z"/><circle cx="8.2" cy="8.2" r="1.5"/><path d="M11.5 12.5h4M11.5 15.5h2.5"/>',
         'bantuan'   => '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.6a2.5 2.5 0 114.9.8c0 1.6-2.5 2-2.5 3.4"/><path d="M12 17.2h.01"/>',
         'menu'      => '<path d="M4 7h16M4 12h16M4 17h16"/>',
         'download'  => '<path d="M12 3.5v12"/><path d="M7 11l5 5 5-5"/><path d="M4 17v2.5A1.5 1.5 0 005.5 21h13a1.5 1.5 0 001.5-1.5V17"/>',
@@ -1815,6 +1861,7 @@ function adminMenuItems()
         'slide'      => ['label' => 'Slide Gambar',         'ikon' => 'image',     'sub' => 'Slider bergambar di bagian atas halaman'],
         'informasi'  => ['label' => 'Kartu Informasi',      'ikon' => 'cards',     'sub' => 'Pengumuman & berita berbentuk kartu'],
         'panduan'    => ['label' => 'Panduan (Dropdown)',   'ikon' => 'list',      'sub' => 'Langkah pemakaian aplikasi, tampil sebagai dropdown'],
+        'tarif'      => ['label' => 'Tarif Layanan',        'ikon' => 'tarif',     'sub' => 'Daftar biaya layanan, tampil di tab Tarif pada halaman informasi'],
         'pengaturan' => ['label' => 'Pengaturan Halaman',   'ikon' => 'gear',      'sub' => 'Judul seksi, kontak, warna, footer'],
         'akun'       => ['label' => 'Akun Saya',            'ikon' => 'user',      'sub' => 'Profil & ganti password'],
         'sistem'     => ['label' => 'Cek Sistem',           'ikon' => 'shield',    'sub' => 'Koneksi database, folder upload, skema'],
@@ -2097,6 +2144,7 @@ function adminViewDashboard()
           ['slide',     'Slide',       'image',  'Gambar slider di atas halaman'],
           ['informasi', 'Informasi',   'cards',  'Kartu pengumuman & berita'],
           ['panduan',   'Panduan',     'list',   'Item dropdown panduan'],
+          ['tarif',     'Tarif',       'tarif',  'Biaya layanan di tab Tarif'],
       ];
       foreach ($kartu as $c):
           $total = adminMenuCount($c[0]);
@@ -2370,6 +2418,59 @@ function adminEntityFields($entitas, $row)
         return;
     }
 
+    if ($entitas === 'tarif') {
+        $tarifNilai = isset($row['tarif']) ? (int) $row['tarif'] : '';
+        ?>
+        <div class="two">
+          <div class="field">
+            <label for="nama_layanan">Nama layanan <span class="req">*</span></label>
+            <input type="text" id="nama_layanan" name="nama_layanan" maxlength="200" required
+                   value="<?php echo e($row['nama_layanan'] ?? ''); ?>" placeholder="Contoh: Konsultasi Dokter Spesialis">
+          </div>
+          <div class="field">
+            <label for="kategori">Kategori</label>
+            <input type="text" id="kategori" name="kategori" maxlength="60" list="daftar-kategori-tarif"
+                   value="<?php echo e($row['kategori'] ?? 'Lainnya'); ?>" placeholder="Rawat Jalan">
+            <datalist id="daftar-kategori-tarif">
+              <?php foreach (adminKategoriTarif() as $k): ?>
+                <option value="<?php echo e($k); ?>"></option>
+              <?php endforeach; ?>
+            </datalist>
+            <div class="ket">Tarif dikelompokkan per kategori di halaman informasi. Boleh mengetik kategori baru.</div>
+          </div>
+        </div>
+        <div class="two">
+          <div class="field">
+            <label for="tarif">Tarif (Rp) <span class="req">*</span></label>
+            <input type="text" id="tarif" name="tarif" inputmode="numeric" maxlength="12"
+                   value="<?php echo e($tarifNilai === '' ? '' : (string) $tarifNilai); ?>" placeholder="75000">
+            <div class="ket">
+              Angka saja, tanpa titik/koma — titik ribuan ditambahkan otomatis saat ditampilkan
+              (<span class="mono"><?php echo e($tarifNilai === '' || $tarifNilai === 0 ? 'Rp 0' : adminFormatRupiah($tarifNilai)); ?></span>).
+            </div>
+          </div>
+          <div class="field">
+            <label for="satuan">Satuan</label>
+            <input type="text" id="satuan" name="satuan" maxlength="60" list="daftar-satuan-tarif"
+                   value="<?php echo e($row['satuan'] ?? 'per kunjungan'); ?>" placeholder="per kunjungan">
+            <datalist id="daftar-satuan-tarif">
+              <?php foreach (adminSatuanTarif() as $s): ?>
+                <option value="<?php echo e($s); ?>"></option>
+              <?php endforeach; ?>
+            </datalist>
+            <div class="ket">Contoh: per hari, per tindakan, per pemeriksaan.</div>
+          </div>
+        </div>
+        <div class="field">
+          <label for="keterangan">Keterangan (opsional)</label>
+          <input type="text" id="keterangan" name="keterangan" maxlength="255"
+                 value="<?php echo e($row['keterangan'] ?? ''); ?>" placeholder="Contoh: belum termasuk obat dan tindakan medis">
+          <div class="ket">Catatan singkat di bawah nama layanan.</div>
+        </div>
+        <?php
+        return;
+    }
+
     // panduan
     ?>
     <div class="two">
@@ -2494,7 +2595,7 @@ function adminRowActions($entitas, $row, $posisi, $jumlah)
         <?php echo adminIco('edit', 15); ?>
       </a>
       <button class="btn btn-s btn-ico btn-d" type="submit" name="aksi" value="hapus" title="Hapus"
-              data-confirm="Hapus <?php echo e(adminRingkas($row['judul'] ?? '', 40)); ?>? Tindakan ini tidak bisa dibatalkan.">
+              data-confirm="Hapus <?php echo e(adminRingkas(adminJudulBaris($row), 40)); ?>? Tindakan ini tidak bisa dibatalkan.">
         <?php echo adminIco('trash', 15); ?>
       </button>
     </form>
@@ -2523,7 +2624,7 @@ function adminEntityTable($entitas)
 
       <?php if ($n === 0): ?>
         <div class="kosong">
-          <div class="ic"><?php echo adminIco($entitas === 'panduan' ? 'list' : ($entitas === 'slide' ? 'image' : 'cards'), 24); ?></div>
+          <div class="ic"><?php echo adminIco($entitas === 'panduan' ? 'list' : ($entitas === 'slide' ? 'image' : ($entitas === 'tarif' ? 'tarif' : 'cards')), 24); ?></div>
           <b>Belum ada <?php echo e(strtolower($e['labelBny'])); ?></b>
           <p>Tambahkan data pertama lewat tombol di atas. Selama masih kosong, halaman informasi.php
              menampilkan pesan bawaan sehingga tidak pernah error.</p>
@@ -2534,10 +2635,18 @@ function adminEntityTable($entitas)
             <thead>
               <tr>
                 <th style="width:36px">No</th>
-                <?php if ($entitas !== 'panduan'): ?><th style="width:88px">Gambar</th><?php endif; ?>
-                <th><?php echo $entitas === 'panduan' ? 'Judul &amp; isi dropdown' : 'Judul'; ?></th>
+                <?php if (!empty($e['punyaGambar'])): ?><th style="width:88px">Gambar</th><?php endif; ?>
+                <th><?php
+                    if ($entitas === 'panduan')   echo 'Judul &amp; isi dropdown';
+                    elseif ($entitas === 'tarif') echo 'Layanan';
+                    else                          echo 'Judul';
+                ?></th>
                 <?php if ($entitas === 'informasi'): ?><th style="width:150px">Kategori / Tanggal</th><?php endif; ?>
                 <?php if ($entitas === 'slide'): ?><th style="width:180px">Tautan</th><?php endif; ?>
+                <?php if ($entitas === 'tarif'): ?>
+                  <th style="width:170px">Kategori</th>
+                  <th style="width:140px;text-align:right">Tarif</th>
+                <?php endif; ?>
                 <th style="width:120px">Diperbarui</th>
                 <th style="width:230px;text-align:right">Aksi</th>
               </tr>
@@ -2570,6 +2679,21 @@ function adminEntityTable($entitas)
                   <td>
                     <span class="badge badge-cat"><?php echo e($row['kategori']); ?></span>
                     <div class="cell-sub"><?php echo e($row['tanggal'] ? adminTanggalIndo($row['tanggal']) : 'tanpa tanggal'); ?></div>
+                  </td>
+
+                <?php elseif ($entitas === 'tarif'): ?>
+                  <td>
+                    <div class="cell-judul"><?php echo e($row['nama_layanan']); ?></div>
+                    <?php if (!empty($row['keterangan'])): ?>
+                      <div class="cell-sub"><?php echo e(adminRingkas($row['keterangan'], 110)); ?></div>
+                    <?php endif; ?>
+                  </td>
+                  <td><span class="badge badge-cat"><?php echo e($row['kategori']); ?></span></td>
+                  <td class="mono" style="text-align:right;white-space:nowrap">
+                    <?php echo e(adminFormatRupiah($row['tarif'])); ?>
+                    <?php if (!empty($row['satuan'])): ?>
+                      <div class="cell-sub" style="text-align:right"><?php echo e($row['satuan']); ?></div>
+                    <?php endif; ?>
                   </td>
 
                 <?php else: ?>
@@ -2939,6 +3063,16 @@ function adminSqlDump()
     }
     $out .= "\n";
 
+    $out .= "-- Tarif layanan (angka hanya CONTOH — ganti dengan tarif resmi rumah sakit)\n";
+    foreach (adminContohTarif() as $i => $t) {
+        $out .= "INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)\n";
+        $out .= 'SELECT ' . adminSqlQuote($t['kategori']) . ', ' . adminSqlQuote($t['nama_layanan']) . ', '
+            . adminSqlQuote($t['satuan']) . ', ' . ((int) $t['tarif']) . ', ' . adminSqlQuote($t['keterangan']) . ', '
+            . (($i + 1) * 10) . ", 1, NOW(), NOW() FROM DUAL\n";
+        $out .= 'WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = ' . adminSqlQuote($t['nama_layanan']) . ");\n";
+    }
+    $out .= "\n";
+
     $out .= "SET FOREIGN_KEY_CHECKS = 1;\n\n";
     $out .= "-- Selesai. Silakan buka backend/admin.php lalu login.\n";
 
@@ -3252,6 +3386,7 @@ function adminRun()
             case 'slide':
             case 'informasi':
             case 'panduan':
+            case 'tarif':
                 adminViewEntity($page);
                 break;
             case 'pengaturan':

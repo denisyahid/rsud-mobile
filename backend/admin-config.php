@@ -81,11 +81,14 @@ function adminDefaultSettings()
         'slider_interval'     => '5000',   // ms
         // Judul tiap seksi
         'info_judul_seksi'    => 'Informasi & Pengumuman',
+        'tarif_judul_seksi'   => 'Tarif Layanan',
         'panduan_judul_seksi' => 'Panduan Pemakaian Aplikasi',
         'kontak_judul_seksi'  => 'Kontak & Layanan',
+        'tampilkan_tarif'     => '1',
         'tampilkan_panduan'   => '1',
         'panduan_buka_satu'   => '1',      // hanya satu dropdown terbuka dalam satu waktu
         'tampilkan_kontak'    => '1',
+        'tarif_catatan'       => 'Tarif dapat berubah sewaktu-waktu sesuai peraturan yang berlaku. Pastikan konfirmasi ke petugas bila membutuhkan rincian biaya.',
         // Kontak
         'alamat'              => 'Jl. Raya Malangbong, Kab. Garut, Jawa Barat',
         'jam_layanan'         => '24 Jam / 7 Hari',
@@ -99,6 +102,7 @@ function adminDefaultSettings()
         // Pesan bila data kosong
         'pesan_kosong_info'   => 'Belum ada informasi terbaru. Silakan cek kembali nanti.',
         'pesan_kosong_slide'  => '',
+        'pesan_kosong_tarif'  => 'Daftar tarif sedang diperbarui. Silakan hubungi petugas untuk informasi biaya.',
     ];
 }
 
@@ -147,6 +151,25 @@ function adminFormatBytes($bytes)
     $i     = $bytes > 0 ? (int) floor(log($bytes, 1024)) : 0;
     $i     = min($i, count($unit) - 1);
     return round($bytes / pow(1024, $i), $i === 0 ? 0 : 1) . ' ' . $unit[$i];
+}
+
+/**
+ * Angka jadi rupiah: 1250000 → "Rp 1.250.000".
+ * @param int|string $nilai
+ * @param bool       $pakaiRp sertakan awalan "Rp "
+ */
+function adminFormatRupiah($nilai, $pakaiRp = true)
+{
+    $nominal = (int) preg_replace('/[^0-9]/', '', (string) $nilai);
+    $teks    = number_format(max(0, $nominal), 0, ',', '.');
+    return $pakaiRp ? 'Rp ' . $teks : $teks;
+}
+
+/** Ambil angka dari teks bebas: "Rp 1.250.000" → 1250000. */
+function adminAngkaDariTeks($teks)
+{
+    $bersih = preg_replace('/[^0-9]/', '', (string) $teks) ?? '';
+    return $bersih === '' ? 0 : min(999999999, (int) $bersih);
 }
 
 /** Nama file aman dari teks (untuk nama file gambar). */
@@ -415,6 +438,18 @@ function adminSchemaStatements($driver = 'mysql')
                 dibuat_pada TEXT NOT NULL,
                 diperbarui_pada TEXT NOT NULL
             )",
+            "CREATE TABLE IF NOT EXISTS tarif (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kategori TEXT NOT NULL DEFAULT 'Lainnya',
+                nama_layanan TEXT NOT NULL,
+                satuan TEXT DEFAULT '',
+                tarif INTEGER NOT NULL DEFAULT 0,
+                keterangan TEXT DEFAULT '',
+                urutan INTEGER NOT NULL DEFAULT 0,
+                status_aktif INTEGER NOT NULL DEFAULT 1,
+                dibuat_pada TEXT NOT NULL,
+                diperbarui_pada TEXT NOT NULL
+            )",
             "CREATE TABLE IF NOT EXISTS admin_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 waktu TEXT NOT NULL,
@@ -426,6 +461,7 @@ function adminSchemaStatements($driver = 'mysql')
             'CREATE INDEX IF NOT EXISTS idx_slide_urutan ON slide (status_aktif, urutan)',
             'CREATE INDEX IF NOT EXISTS idx_informasi_urutan ON informasi (status_aktif, tanggal)',
             'CREATE INDEX IF NOT EXISTS idx_panduan_urutan ON panduan (status_aktif, urutan)',
+            'CREATE INDEX IF NOT EXISTS idx_tarif_kategori ON tarif (status_aktif, kategori, urutan)',
         ];
     }
 
@@ -502,6 +538,21 @@ function adminSchemaStatements($driver = 'mysql')
             KEY idx_panduan_aktif_urutan (status_aktif, urutan)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
+        "CREATE TABLE IF NOT EXISTS tarif (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            kategori VARCHAR(60) NOT NULL DEFAULT 'Lainnya',
+            nama_layanan VARCHAR(200) NOT NULL,
+            satuan VARCHAR(60) NOT NULL DEFAULT '',
+            tarif INT UNSIGNED NOT NULL DEFAULT 0,
+            keterangan VARCHAR(255) NOT NULL DEFAULT '',
+            urutan SMALLINT NOT NULL DEFAULT 0,
+            status_aktif TINYINT(1) NOT NULL DEFAULT 1,
+            dibuat_pada DATETIME NOT NULL,
+            diperbarui_pada DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            KEY idx_tarif_kategori (status_aktif, kategori, urutan)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
         "CREATE TABLE IF NOT EXISTS admin_log (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT,
             waktu DATETIME NOT NULL,
@@ -518,7 +569,7 @@ function adminSchemaStatements($driver = 'mysql')
 /** Nama-nama tabel inti (untuk cek kelengkapan instalasi). */
 function adminCoreTables()
 {
-    return ['admin_users', 'pengaturan', 'slide', 'informasi', 'panduan', 'admin_log'];
+    return ['admin_users', 'pengaturan', 'slide', 'informasi', 'panduan', 'tarif', 'admin_log'];
 }
 
 // ===========================================================================
@@ -685,5 +736,42 @@ function adminContohSlide()
         ['judul' => 'Pendaftaran Online Lebih Cepat', 'subjudul' => 'Booking poliklinik dari rumah, tanpa antri lama di loket.', 'tautan' => '', 'warna' => '#1b5e20'],
         ['judul' => 'Hasil Lab & Radiologi di Genggaman', 'subjudul' => 'Unduh PDF hasil pemeriksaan begitu statusnya Selesai.', 'tautan' => '', 'warna' => '#0f766e'],
         ['judul' => 'Check-in Kunjungan Pakai QR', 'subjudul' => 'Pindai QR di loket admisi untuk memastikan kehadiran Anda.', 'tautan' => '', 'warna' => '#1d4ed8'],
+    ];
+}
+
+/**
+ * Kategori tarif bawaan — dipakai panel admin (datalist) dan halaman informasi
+ * (pengelompokan). Admin boleh mengetik kategori baru di luar daftar ini.
+ */
+function adminKategoriTarif()
+{
+    return ['Pendaftaran', 'Rawat Jalan', 'IGD', 'Rawat Inap', 'Laboratorium',
+            'Radiologi', 'Tindakan', 'Persalinan', 'Farmasi', 'Lainnya'];
+}
+
+/** Satuan tarif yang umum dipakai (datalist di form admin). */
+function adminSatuanTarif()
+{
+    return ['per kunjungan', 'per hari', 'per tindakan', 'per pemeriksaan',
+            'per paket', 'per resep', 'per foto', 'per kali'];
+}
+
+/**
+ * Data contoh tarif layanan. Angka hanya contoh — ganti dengan tarif resmi
+ * rumah sakit lewat panel admin (menu "Tarif Layanan").
+ */
+function adminContohTarif()
+{
+    return [
+        ['kategori' => 'Pendaftaran',   'nama_layanan' => 'Pendaftaran Rawat Jalan',   'satuan' => 'per kunjungan',   'tarif' => 15000,   'keterangan' => 'Termasuk kartu berobat untuk pasien baru.'],
+        ['kategori' => 'Rawat Jalan',   'nama_layanan' => 'Konsultasi Dokter Umum',    'satuan' => 'per kunjungan',   'tarif' => 35000,   'keterangan' => ''],
+        ['kategori' => 'Rawat Jalan',   'nama_layanan' => 'Konsultasi Dokter Spesialis', 'satuan' => 'per kunjungan', 'tarif' => 75000,   'keterangan' => 'Mengikuti jadwal praktik poliklinik.'],
+        ['kategori' => 'IGD',           'nama_layanan' => 'Pemeriksaan IGD',           'satuan' => 'per kunjungan',   'tarif' => 100000,  'keterangan' => 'Belum termasuk obat dan tindakan medis.'],
+        ['kategori' => 'Laboratorium',  'nama_layanan' => 'Darah Lengkap',             'satuan' => 'per pemeriksaan', 'tarif' => 65000,   'keterangan' => ''],
+        ['kategori' => 'Laboratorium',  'nama_layanan' => 'Gula Darah Sewaktu',        'satuan' => 'per pemeriksaan', 'tarif' => 25000,   'keterangan' => ''],
+        ['kategori' => 'Radiologi',     'nama_layanan' => 'Rontgen Thorax',            'satuan' => 'per foto',        'tarif' => 120000,  'keterangan' => 'Hasil dapat diunduh lewat aplikasi.'],
+        ['kategori' => 'Rawat Inap',    'nama_layanan' => 'Kamar Kelas III',           'satuan' => 'per hari',        'tarif' => 150000,  'keterangan' => 'Termasuk visite dokter dan perawatan.'],
+        ['kategori' => 'Rawat Inap',    'nama_layanan' => 'Kamar Kelas II',            'satuan' => 'per hari',        'tarif' => 275000,  'keterangan' => ''],
+        ['kategori' => 'Persalinan',    'nama_layanan' => 'Persalinan Normal',         'satuan' => 'per tindakan',    'tarif' => 2500000, 'keterangan' => 'Belum termasuk penanganan komplikasi.'],
     ];
 }

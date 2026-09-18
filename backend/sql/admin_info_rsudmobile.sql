@@ -99,6 +99,21 @@ CREATE TABLE IF NOT EXISTS panduan (
     KEY idx_panduan_aktif_urutan (status_aktif, urutan)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS tarif (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    kategori VARCHAR(60) NOT NULL DEFAULT 'Lainnya',
+    nama_layanan VARCHAR(200) NOT NULL,
+    satuan VARCHAR(60) NOT NULL DEFAULT '',
+    tarif INT UNSIGNED NOT NULL DEFAULT 0,
+    keterangan VARCHAR(255) NOT NULL DEFAULT '',
+    urutan SMALLINT NOT NULL DEFAULT 0,
+    status_aktif TINYINT(1) NOT NULL DEFAULT 1,
+    dibuat_pada DATETIME NOT NULL,
+    diperbarui_pada DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_tarif_kategori (status_aktif, kategori, urutan)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS admin_log (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     waktu DATETIME NOT NULL,
@@ -125,11 +140,13 @@ INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_p
 
 -- Judul Seksi
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('info_judul_seksi', 'Informasi & Pengumuman', 'Judul seksi informasi', 'Judul Seksi', 'text', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tarif_judul_seksi', 'Tarif Layanan', 'Judul tab tarif', 'Judul Seksi', 'text', NOW());
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('panduan_judul_seksi', 'Panduan Pemakaian Aplikasi', 'Judul seksi panduan', 'Judul Seksi', 'text', NOW());
-INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tampilkan_panduan', '1', 'Tampilkan seksi panduan (dropdown)', 'Judul Seksi', 'switch', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tampilkan_tarif', '1', 'Tampilkan tab tarif layanan', 'Judul Seksi', 'switch', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tampilkan_panduan', '1', 'Tampilkan tab panduan', 'Judul Seksi', 'switch', NOW());
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('panduan_buka_satu', '1', 'Hanya satu dropdown terbuka', 'Judul Seksi', 'switch', NOW());
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('kontak_judul_seksi', 'Kontak & Layanan', 'Judul seksi kontak', 'Judul Seksi', 'text', NOW());
-INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tampilkan_kontak', '1', 'Tampilkan seksi kontak', 'Judul Seksi', 'switch', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tampilkan_kontak', '1', 'Tampilkan tab kontak', 'Judul Seksi', 'switch', NOW());
 
 -- Kontak & Layanan
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('alamat', 'Jl. Raya Malangbong, Kab. Garut, Jawa Barat', 'Alamat', 'Kontak & Layanan', 'text', NOW());
@@ -144,6 +161,8 @@ INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_p
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('footer_teks', 'RSUD Malangbong — Kabupaten Garut, Jawa Barat', 'Teks footer', 'Footer & Pesan', 'text', NOW());
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('pesan_kosong_info', 'Belum ada informasi terbaru. Silakan cek kembali nanti.', 'Pesan bila informasi kosong', 'Footer & Pesan', 'text', NOW());
 INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('pesan_kosong_slide', '', 'Pesan bila slide kosong', 'Footer & Pesan', 'text', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('pesan_kosong_tarif', 'Daftar tarif sedang diperbarui. Silakan hubungi petugas untuk informasi biaya.', 'Pesan bila tarif kosong', 'Footer & Pesan', 'text', NOW());
+INSERT IGNORE INTO pengaturan (kunci, nilai, label, kelompok, tipe, diperbarui_pada) VALUES ('tarif_catatan', 'Tarif dapat berubah sewaktu-waktu sesuai peraturan yang berlaku. Pastikan konfirmasi ke petugas bila membutuhkan rincian biaya.', 'Catatan di bawah daftar tarif', 'Footer & Pesan', 'text', NOW());
 
 -- ---------------------------------------------------------------------------
 -- AKUN ADMIN PERTAMA
@@ -221,6 +240,38 @@ Tekan Lihat Bukti untuk menampilkan kartu antrian beserta QR check-in.
 Kunjungan rawat jalan yang belum dilayani dapat dibatalkan dari halaman ini.
 Saat tiba di rumah sakit, lakukan check-in dengan memindai QR di loket admisi.', 'riwayat', 50, 1, NOW(), NOW() FROM DUAL
 WHERE NOT EXISTS (SELECT 1 FROM panduan WHERE judul = 'Riwayat Kunjungan & Bukti Antrian');
+
+-- Tarif layanan (angka hanya CONTOH — ganti dengan tarif resmi rumah sakit)
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Pendaftaran', 'Pendaftaran Rawat Jalan', 'per kunjungan', 15000, 'Termasuk kartu berobat untuk pasien baru.', 10, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Pendaftaran Rawat Jalan');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Rawat Jalan', 'Konsultasi Dokter Umum', 'per kunjungan', 35000, '', 20, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Konsultasi Dokter Umum');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Rawat Jalan', 'Konsultasi Dokter Spesialis', 'per kunjungan', 75000, 'Mengikuti jadwal praktik poliklinik.', 30, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Konsultasi Dokter Spesialis');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'IGD', 'Pemeriksaan IGD', 'per kunjungan', 100000, 'Belum termasuk obat dan tindakan medis.', 40, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Pemeriksaan IGD');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Laboratorium', 'Darah Lengkap', 'per pemeriksaan', 65000, '', 50, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Darah Lengkap');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Laboratorium', 'Gula Darah Sewaktu', 'per pemeriksaan', 25000, '', 60, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Gula Darah Sewaktu');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Radiologi', 'Rontgen Thorax', 'per foto', 120000, 'Hasil dapat diunduh lewat aplikasi.', 70, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Rontgen Thorax');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Rawat Inap', 'Kamar Kelas III', 'per hari', 150000, 'Termasuk visite dokter dan perawatan.', 80, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Kamar Kelas III');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Rawat Inap', 'Kamar Kelas II', 'per hari', 275000, '', 90, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Kamar Kelas II');
+INSERT INTO tarif (kategori, nama_layanan, satuan, tarif, keterangan, urutan, status_aktif, dibuat_pada, diperbarui_pada)
+SELECT 'Persalinan', 'Persalinan Normal', 'per tindakan', 2500000, 'Belum termasuk penanganan komplikasi.', 100, 1, NOW(), NOW() FROM DUAL
+WHERE NOT EXISTS (SELECT 1 FROM tarif WHERE nama_layanan = 'Persalinan Normal');
 
 SET FOREIGN_KEY_CHECKS = 1;
 

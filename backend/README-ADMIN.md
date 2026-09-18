@@ -1,8 +1,8 @@
 # 🖥️ Panel Admin Konten "Informasi" — RSUD Mobile
 
 Panel admin untuk mengelola isi halaman **Informasi** pada aplikasi mobile pasien
-RSUD Malangbong: **slider gambar**, **kartu pengumuman bergambar**, **panduan
-berbentuk dropdown**, serta **kontak & tampilan halaman**.
+RSUD Malangbong: **slider berita**, **tarif layanan**, **panduan berbentuk
+dropdown**, serta **kontak & tampilan halaman**.
 
 Semua perubahan di panel ini **langsung tampil di aplikasi** tanpa perlu
 membangun ulang APK, karena tab *Informasi* memuat `backend/informasi.php`
@@ -14,13 +14,14 @@ yang isinya diambil dari database.
 
 | Berkas | Fungsi |
 |---|---|
-| `backend/admin.php` | Panel admin: login, CRUD slide/kartu/panduan, upload gambar, pengaturan, cek sistem |
+| `backend/admin.php` | Panel admin: login, CRUD slide/kartu/panduan/tarif, upload gambar, pengaturan, cek sistem |
 | `backend/admin-config.php` | Konfigurasi database admin (**terpisah** dari `api.php`), helper, skema tabel |
 | `backend/informasi.php` | Halaman publik yang tampil di tab *Informasi* (isi sepenuhnya dinamis) |
 | `backend/sql/admin_info_rsudmobile.sql` | Skema + data awal database admin — tinggal **import** |
 | `backend/uploads/` | Folder penyimpanan gambar hasil unggahan (`.htaccess` menolak eksekusi skrip) |
 | `src/components/TabInformasi.jsx` | Tab *Informasi* — judul ganda di atas iframe dihapus |
-| `backend/tests/admin-smoke.mjs` | 134 pengujian otomatis (PHP WebAssembly + SQLite) |
+| `backend/tests/admin-smoke.mjs` | 179 pengujian otomatis (PHP WebAssembly + SQLite) |
+| `backend/tests/lint-constants.mjs` | Menolak pemakaian konstanta PHP yang tidak dikenal |
 | `backend/tests/generate-sql.mjs` | Membuat ulang file `.sql` dari kode panel (anti melenceng) |
 | `backend/tests/sql-lint.mjs` | Memeriksa sintaks MySQL file `.sql` |
 
@@ -101,9 +102,10 @@ Buka `http://server-anda/rsud-mobile/backend/admin.php`
 | Menu | Yang dikelola | Tampil di aplikasi sebagai |
 |---|---|---|
 | **Dashboard** | Ringkasan jumlah konten, status sistem, jejak aktivitas | — |
-| **Slide Gambar** | Gambar besar + judul + subjudul + tautan | Slider (geser otomatis, bisa di-swipe) di paling atas |
-| **Kartu Informasi** | Kategori, judul, isi, gambar, tanggal, tautan | Kartu bergambar (2 kolom di layar lebar, 1 kolom di ponsel) |
-| **Panduan (Dropdown)** | Judul + isi langkah + ikon | Dropdown/akordion — hemat tempat, dibuka saat dibutuhkan |
+| **Slide Gambar** | Gambar besar + judul + subjudul + tautan | Slider berita (geser otomatis, bisa di-swipe) di paling atas |
+| **Kartu Informasi** | Kategori, judul, isi, gambar, tanggal, tautan | Data berita; tidak dirender lagi di `informasi.php`, tetap tersedia lewat `?format=json` |
+| **Panduan (Dropdown)** | Judul + isi langkah + ikon | Tab **Panduan** — dropdown/akordion, dibuka saat dibutuhkan |
+| **Tarif Layanan** | Kategori, nama layanan, satuan, tarif (Rp), keterangan | Tab **Tarif Layanan** — daftar biaya dikelompokkan per kategori |
 | **Pengaturan Halaman** | Warna tema, judul tiap seksi, kontak (alamat, jam, WA, email, website, Maps), footer | Semua bagian non-konten |
 | **Akun Saya** | Nama, email, ganti password | — |
 | **Cek Sistem** | Status koneksi DB, kelengkapan tabel, folder upload, jejak aktivitas, unduh file SQL | — |
@@ -136,12 +138,25 @@ Semua keluaran di-*escape*, jadi menempel HTML/JavaScript tidak akan dieksekusi.
 
 ## 4. Halaman informasi.php
 
+Struktur halaman: **satu slider berita** di atas, lalu **navigasi tiga tab** —
+**1. Tarif Layanan · 2. Panduan · 3. Kontak & Layanan**. Perpindahan tab terjadi
+di dalam `informasi.php` sendiri (tanpa memuat ulang halaman): panel disembunyikan
+lewat atribut `hidden`, tab terakhir diingat di `localStorage`, dan bisa dibuka
+langsung lewat hash `informasi.php#tarif`, `#panduan`, atau `#kontak`.
+
+* Tab **Tarif Layanan** menampilkan tarif dikelompokkan per kategori, lengkap
+  dengan satuan dan keterangan, plus kotak pencarian bila isinya lebih dari 8 baris.
+* Isi tiap tab bisa dimatikan di **Pengaturan Halaman** (`Tampilkan tab tarif`,
+  `Tampilkan tab panduan`, `Tampilkan tab kontak`) — tab yang dimatikan tidak dirender.
 * **Header hijau dihapus** sesuai permintaan — halaman langsung mulai dari slider.
   Bila suatu saat ingin ditampilkan lagi: **Pengaturan Halaman → "Tampilkan header"**.
 * Teks lama *"Informasi & panduan pemakaian aplikasi RSUD Malangbong"* di atas
   iframe (dalam `TabInformasi.jsx`) juga sudah dihapus — tidak ada judul ganda.
 * Panduan tampil sebagai **dropdown** (satu terbuka pada satu waktu; bisa diubah
   di pengaturan).
+* Tarif ditulis di panel sebagai angka (`75000`) dan otomatis ditampilkan sebagai
+  **Rp 75.000**. Catatan di bawah daftar tarif bisa diubah lewat pengaturan
+  (`Catatan di bawah daftar tarif`).
 * Tersedia mode data mentah untuk pengembangan lanjut: `informasi.php?format=json`.
 * **Tidak pernah error di depan pasien:** bila database admin mati atau tabel
   belum dibuat, halaman otomatis menampilkan konten cadangan + catatan halus.

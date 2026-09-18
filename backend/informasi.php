@@ -37,6 +37,7 @@ function infoMuatKonten()
         'slide'      => [],
         'informasi'  => [],
         'panduan'    => [],
+        'tarif'      => [],
         'pengaturan' => adminSettings(),   // sudah berisi default walau DB mati
     ];
 
@@ -78,6 +79,15 @@ function infoMuatKonten()
                   LIMIT 40'
             );
         }
+        if (adminTableExists('tarif')) {
+            $hasil['tarif'] = adminAll(
+                'SELECT id, kategori, nama_layanan, satuan, tarif, keterangan
+                   FROM tarif
+                  WHERE status_aktif = 1
+                  ORDER BY kategori ASC, urutan ASC, id ASC
+                  LIMIT 400'
+            );
+        }
     } catch (Throwable $ex) {
         $hasil['ok']    = false;
         $hasil['error'] = $ex->getMessage();
@@ -96,6 +106,7 @@ function infoKontenCadangan()
     if (function_exists('adminContohSlide'))     $contoh['slide']     = adminContohSlide();
     if (function_exists('adminContohInformasi')) $contoh['informasi'] = adminContohInformasi();
     if (function_exists('adminContohPanduan'))   $contoh['panduan']   = adminContohPanduan();
+    if (function_exists('adminContohTarif'))     $contoh['tarif']     = adminContohTarif();
 
     $slide = [];
     foreach ($contoh['slide'] ?? [] as $i => $s) {
@@ -119,7 +130,28 @@ function infoKontenCadangan()
         $panduan[] = ['id' => $i + 1, 'judul' => $s['judul'], 'isi' => $s['isi'], 'ikon' => $s['ikon']];
     }
 
-    return ['slide' => $slide, 'informasi' => $info, 'panduan' => $panduan];
+    $tarif = [];
+    foreach ($contoh['tarif'] ?? [] as $i => $s) {
+        $tarif[] = [
+            'id' => $i + 1, 'kategori' => $s['kategori'], 'nama_layanan' => $s['nama_layanan'],
+            'satuan' => $s['satuan'], 'tarif' => (int) $s['tarif'], 'keterangan' => $s['keterangan'],
+        ];
+    }
+
+    return ['slide' => $slide, 'informasi' => $info, 'panduan' => $panduan, 'tarif' => $tarif];
+}
+
+/** Kelompokkan tarif berdasarkan kategori (urutan kemunculan dipertahankan). */
+function infoTarifPerKategori(array $tarifList)
+{
+    $kelompok = [];
+    foreach ($tarifList as $t) {
+        $kat = trim((string) ($t['kategori'] ?? ''));
+        if ($kat === '') $kat = 'Lainnya';
+        if (!isset($kelompok[$kat])) $kelompok[$kat] = [];
+        $kelompok[$kat][] = $t;
+    }
+    return $kelompok;
 }
 
 // ===========================================================================
@@ -148,6 +180,8 @@ function infoIco($nama, $ukuran = 18)
         'riwayat'  => '<circle cx="12" cy="12" r="9"/><path d="M12 7v5.2l3.4 2"/>',
         'obat'     => '<rect x="2.5" y="9" width="19" height="6" rx="3"/><path d="M12 9v6"/>',
         'bayar'    => '<rect x="2.5" y="5" width="19" height="14" rx="2.2"/><path d="M2.5 10h19M6.5 15h4"/>',
+        'tarif'    => '<path d="M20.5 12.5l-8 8a1.6 1.6 0 01-2.3 0l-6.2-6.2a1.6 1.6 0 01-.5-1.2V4.8A1.3 1.3 0 014.8 3.5h8.3c.4 0 .9.2 1.2.5l6.2 6.2c.6.6.6 1.7 0 2.3z"/><circle cx="8.2" cy="8.2" r="1.5"/><path d="M11.5 12.5h4M11.5 15.5h2.5"/>',
+        'search'   => '<circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>',
         'bantuan'  => '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.6a2.5 2.5 0 114.9.8c0 1.6-2.5 2-2.5 3.4"/><path d="M12 17.2h.01"/>',
         'chevron'  => '<path d="M6 9.5l6 6 6-6"/>',
         'pin'      => '<path d="M12 21.5s7-6 7-11a7 7 0 10-14 0c0 5 7 11 7 11z"/><circle cx="12" cy="10.2" r="2.6"/>',
@@ -221,6 +255,10 @@ if (strtolower((string) ($_GET['format'] ?? '')) === 'json') {
             return $s;
         }, $data['ok'] ? $data['informasi'] : ($fallback['informasi'] ?? [])),
         'panduan'    => $data['ok'] ? $data['panduan'] : ($fallback['panduan'] ?? []),
+        'tarif'      => array_map(static function ($t) {
+            $t['tarif_teks'] = adminFormatRupiah($t['tarif'] ?? 0);
+            return $t;
+        }, $data['ok'] ? $data['tarif'] : ($fallback['tarif'] ?? [])),
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
 }
@@ -233,34 +271,71 @@ $data     = infoMuatKonten();
 $set      = $data['pengaturan'];
 $darDb    = (bool) $data['ok'];
 
-if (!$darDb || (empty($data['slide']) && empty($data['informasi']) && empty($data['panduan']))) {
+if (!$darDb || (empty($data['slide']) && empty($data['informasi']) && empty($data['panduan']) && empty($data['tarif']))) {
     $cadangan = infoKontenCadangan();
     if (!$darDb) {
         $data['slide']     = $cadangan['slide'];
         $data['informasi'] = $cadangan['informasi'];
         $data['panduan']   = $cadangan['panduan'];
+        $data['tarif']     = $cadangan['tarif'];
     } else {
         // database hidup tapi masih kosong → pakai contoh agar halaman tidak hampa
         if (empty($data['slide']))     $data['slide']     = $cadangan['slide'];
         if (empty($data['informasi'])) $data['informasi'] = $cadangan['informasi'];
         if (empty($data['panduan']))   $data['panduan']   = $cadangan['panduan'];
+        if (empty($data['tarif']))     $data['tarif']     = $cadangan['tarif'];
     }
 }
 
 $slideList     = $data['slide'];
 $infoList      = $data['informasi'];
 $panduanList   = $data['panduan'];
+$tarifList     = $data['tarif'];
 
 $warnaUtama    = (string) ($set['warna_utama'] ?? '#1b5e20');
 if (!preg_match('/^#[0-9a-fA-F]{6}$/', $warnaUtama)) $warnaUtama = '#1b5e20';
 
 $tampilHeader  = adminSettingBool('tampilkan_header', false);
 $tampilSlider  = adminSettingBool('tampilkan_slider', true) && count($slideList) > 0;
+$tampilTarif   = adminSettingBool('tampilkan_tarif', true);
 $tampilPanduan = adminSettingBool('tampilkan_panduan', true);
 $tampilKontak  = adminSettingBool('tampilkan_kontak', true);
 $autoplay      = adminSettingBool('slider_autoplay', true);
 $interval      = max(2000, min(60000, (int) ($set['slider_interval'] ?? 5000)));
 $satuBuka      = adminSettingBool('panduan_buka_satu', true);
+
+// ---------------------------------------------------------------------------
+// Daftar tab di bawah slider: Tarif Layanan → Panduan → Kontak.
+// Tab yang isinya dimatikan lewat pengaturan tidak ikut dirender.
+// ---------------------------------------------------------------------------
+$tabList = [];
+if ($tampilTarif) {
+    $tabList[] = [
+        'id'    => 'tarif',
+        'label' => (string) ($set['tarif_judul_seksi'] ?? 'Tarif Layanan'),
+        'ikon'  => 'tarif',
+        'jml'   => count($tarifList),
+    ];
+}
+if ($tampilPanduan) {
+    $tabList[] = [
+        'id'    => 'panduan',
+        'label' => (string) ($set['panduan_judul_seksi'] ?? 'Panduan'),
+        'ikon'  => 'book',
+        'jml'   => count($panduanList),
+    ];
+}
+if ($tampilKontak) {
+    $tabList[] = [
+        'id'    => 'kontak',
+        'label' => (string) ($set['kontak_judul_seksi'] ?? 'Kontak & Layanan'),
+        'ikon'  => 'phone',
+        'jml'   => 0,
+    ];
+}
+$tarifKelompok = infoTarifPerKategori($tarifList);
+$tarifCatatan  = trim((string) ($set['tarif_catatan'] ?? ''));
+$tabIds        = array_column($tabList, 'id');
 
 header('Content-Type: text/html; charset=UTF-8');
 header('Cache-Control: no-cache, no-store, must-revalidate');
@@ -404,6 +479,56 @@ header('Pragma: no-cache');
   .kontak span{display:block;font-size:11.5px;color:var(--muted);word-break:break-word}
   .kontak .go{margin-left:auto;color:#9ca3af;font-size:14px;flex:none}
 
+  /* ── navigasi tab (Tarif / Panduan / Kontak) ────────────── */
+  .tabnav{
+    position:sticky;top:0;z-index:20;display:flex;gap:4px;padding:6px;
+    background:rgba(255,255,255,.94);backdrop-filter:blur(8px);
+    border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);
+  }
+  .tabnav button{
+    flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+    padding:8px 4px 7px;border:0;border-radius:11px;background:transparent;color:var(--muted);
+    font:inherit;font-size:11px;font-weight:700;line-height:1.2;cursor:pointer;
+    transition:background .18s,color .18s;
+  }
+  .tabnav button svg{flex:none}
+  .tabnav button .lbl{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tabnav button:hover{background:#f2f6f2;color:var(--ink)}
+  .tabnav button[aria-selected="true"]{background:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(27,94,32,.24)}
+  .tabnav button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+  .tabpanel[hidden]{display:none}
+  .tabpanel{animation:muncul .22s ease-out}
+  @keyframes muncul{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.tabpanel{animation:none}}
+
+  /* ── tarif layanan ──────────────────────────────────────── */
+  .cari-tarif{position:relative;margin:10px 0 12px}
+  .cari-tarif input{
+    width:100%;padding:10px 12px 10px 34px;font:inherit;font-size:12.5px;color:var(--ink);
+    background:var(--white);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);
+  }
+  .cari-tarif input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
+  .cari-tarif svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--muted)}
+  .tarif-grup + .tarif-grup{margin-top:12px}
+  .tarif-grup h3{
+    display:flex;align-items:center;gap:7px;font-size:11px;font-weight:800;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--brand);margin:0 2px 6px;
+  }
+  .tarif-grup h3 .garis{flex:1;height:1px;background:var(--line)}
+  .tarif-grup h3 .jml{font-size:10px;color:var(--muted);background:#fff;border:1px solid var(--line);padding:1px 7px;border-radius:999px;letter-spacing:0}
+  .tarif-list{background:var(--white);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+  .tarif-item{display:flex;align-items:flex-start;gap:10px;padding:11px 13px;border-top:1px solid #f1f3f1}
+  .tarif-item:first-child{border-top:0}
+  .tarif-item .nama{flex:1;min-width:0}
+  .tarif-item .nama b{display:block;font-size:12.8px;font-weight:700;line-height:1.4}
+  .tarif-item .nama span{display:block;font-size:11px;color:var(--muted);margin-top:2px;line-height:1.5}
+  .tarif-item .harga{flex:none;text-align:right;white-space:nowrap}
+  .tarif-item .harga b{display:block;font-size:12.8px;font-weight:800;color:var(--brand);font-variant-numeric:tabular-nums}
+  .tarif-item .harga span{display:block;font-size:10.5px;color:var(--muted);margin-top:2px}
+  .tarif-item[hidden]{display:none}
+  .tarif-grup[hidden]{display:none}
+  .catatan-tarif{margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6;background:#f4f7f4;border:1px dashed var(--line);border-radius:12px;padding:9px 11px}
+
   /* ── footer & catatan ───────────────────────────────────── */
   .footer{text-align:center;font-size:11px;color:#9ca3af;padding:18px 14px 30px;line-height:1.7}
   .footer b{color:var(--brand)}
@@ -464,30 +589,30 @@ header('Pragma: no-cache');
           <div class="slider" id="slider"
                data-autoplay="<?php echo $autoplay ? '1' : '0'; ?>"
                data-interval="<?php echo (int) $interval; ?>">
-            <?php foreach ($slideList as $i => $s):
-                $imgUrl = infoGambarUrl($s['gambar'] ?? '');
-                $warna  = (string) ($s['warna_latar'] ?? '');
+            <?php foreach ($slideList as $i => $sl):
+                $imgUrl = infoGambarUrl($sl['gambar'] ?? '');
+                $warna  = (string) ($sl['warna_latar'] ?? '');
                 if (!preg_match('/^#[0-9a-fA-F]{6}$/', $warna)) {
-                    [$c1, $c2] = infoWarnaDariTeks((string) ($s['judul'] ?? $i));
+                    [$c1, $c2] = infoWarnaDariTeks((string) ($sl['judul'] ?? $i));
                     $warna = $c1;
                     $grad  = 'linear-gradient(135deg,' . $c1 . ',' . $c2 . ')';
                 } else {
                     $grad = 'linear-gradient(135deg,' . $warna . ',' . $warna . 'dd)';
                 }
-                $tautan = trim((string) ($s['tautan'] ?? ''));
+                $tautan = trim((string) ($sl['tautan'] ?? ''));
                 $boleh  = $tautan !== '' && preg_match('#^(https?://|mailto:|tel:)#i', $tautan);
             ?>
               <div class="slide" role="group" aria-roledescription="slide" aria-label="<?php echo (int) ($i + 1); ?> dari <?php echo count($slideList); ?>">
                 <?php if ($boleh): ?><a href="<?php echo eUrl($tautan); ?>"><?php else: ?><span class="no-link"><?php endif; ?>
                   <div class="media" style="background:<?php echo e($grad); ?>">
                     <?php if ($imgUrl !== ''): ?>
-                      <img src="<?php echo e($imgUrl); ?>" alt="<?php echo e($s['judul']); ?>" loading="<?php echo $i === 0 ? 'eager' : 'lazy'; ?>" decoding="async">
+                      <img src="<?php echo e($imgUrl); ?>" alt="<?php echo e($sl['judul']); ?>" loading="<?php echo $i === 0 ? 'eager' : 'lazy'; ?>" decoding="async">
                     <?php else: ?>
                       <div class="ph"><?php echo infoIco('image', 42); ?></div>
                     <?php endif; ?>
                     <div class="caption">
-                      <b><?php echo e($s['judul']); ?></b>
-                      <?php if (!empty($s['subjudul'])): ?><span><?php echo e($s['subjudul']); ?></span><?php endif; ?>
+                      <b><?php echo e($sl['judul']); ?></b>
+                      <?php if (!empty($sl['subjudul'])): ?><span><?php echo e($sl['subjudul']); ?></span><?php endif; ?>
                     </div>
                   </div>
                 <?php if ($boleh): ?></a><?php else: ?></span><?php endif; ?>
@@ -515,95 +640,115 @@ header('Pragma: no-cache');
       </section>
     <?php endif; ?>
 
-    <!-- ══════════ KARTU INFORMASI ══════════ -->
-    <section aria-labelledby="hd-info">
-      <div class="seksi-hd" id="hd-info">
-        <?php echo infoIco('info', 15); ?>
-        <h2><?php echo e($set['info_judul_seksi'] ?? 'Informasi & Pengumuman'); ?></h2>
-        <span class="garis"></span>
-        <?php if (count($infoList) > 0): ?><span class="jml"><?php echo count($infoList); ?></span><?php endif; ?>
-      </div>
+    <!-- ══════════ NAVIGASI TAB (Tarif Layanan / Panduan / Kontak) ══════════ -->
+    <?php if (count($tabList) > 0): ?>
+      <nav class="tabnav" id="tabnav" role="tablist" aria-label="Navigasi informasi"
+           data-tab-awal="<?php echo e($tabIds[0] ?? ''); ?>">
+        <?php foreach ($tabList as $i => $t): ?>
+          <button type="button" role="tab" id="tab-<?php echo e($t['id']); ?>"
+                  data-tab="<?php echo e($t['id']); ?>"
+                  aria-controls="panel-<?php echo e($t['id']); ?>"
+                  aria-selected="<?php echo $i === 0 ? 'true' : 'false'; ?>"
+                  tabindex="<?php echo $i === 0 ? '0' : '-1'; ?>">
+            <?php echo infoIco($t['ikon'], 18); ?>
+            <span class="lbl"><?php echo e($t['label']); ?></span>
+          </button>
+        <?php endforeach; ?>
+      </nav>
+    <?php endif; ?>
 
-      <?php if (count($infoList) === 0): ?>
-        <div class="kosong" style="margin-top:10px"><?php echo e($set['pesan_kosong_info'] ?? 'Belum ada informasi.'); ?></div>
-      <?php else: ?>
-        <div class="kartu-grid" style="margin-top:10px">
-          <?php foreach ($infoList as $i => $it):
-              $imgUrl = infoGambarUrl($it['gambar'] ?? '');
-              [$c1, $c2] = infoWarnaDariTeks((string) ($it['kategori'] ?? '') . (string) ($it['judul'] ?? $i));
-              $teksHtml = adminFormatTeks($it['konten'] ?? '');
-              $isiMurni = trim(preg_replace('/\s+/', ' ', (string) ($it['konten'] ?? '')) ?? '');
-              $panjang  = function_exists('mb_strlen') ? mb_strlen($isiMurni) : strlen($isiMurni);
-              $tautan   = trim((string) ($it['tautan'] ?? ''));
-              $boleh    = $tautan !== '' && preg_match('#^(https?://|mailto:|tel:)#i', $tautan);
-          ?>
-            <article class="kartu">
-              <div class="media" style="background:linear-gradient(135deg,<?php echo e($c1); ?>,<?php echo e($c2); ?>)">
-                <?php if ($imgUrl !== ''): ?>
-                  <img src="<?php echo e($imgUrl); ?>" alt="<?php echo e($it['judul']); ?>" loading="lazy" decoding="async">
-                <?php else: ?>
-                  <div class="ph"><?php echo infoIco('image', 30); ?></div>
-                <?php endif; ?>
-                <?php if (!empty($it['kategori'])): ?><span class="tag"><?php echo e($it['kategori']); ?></span><?php endif; ?>
-              </div>
-              <div class="isi">
-                <h3><?php echo e($it['judul']); ?></h3>
-                <?php if (!empty($it['tanggal'])): ?>
-                  <div class="tgl"><?php echo infoIco('clock', 11); ?> <?php echo e(adminTanggalIndo($it['tanggal'])); ?></div>
-                <?php endif; ?>
-                <?php if ($teksHtml !== ''): ?>
-                  <div class="teks<?php echo $panjang > 150 ? ' terpotong' : ''; ?>"
-                       id="teks-<?php echo (int) $it['id']; ?>"<?php echo $panjang > 150 ? ' data-panjang="1"' : ''; ?>><?php echo $teksHtml; ?></div>
-                <?php endif; ?>
-                <div class="selengkapnya">
-                  <?php if ($panjang > 150): ?>
-                    <button type="button" data-target="teks-<?php echo (int) $it['id']; ?>" aria-expanded="false">
-                      <span class="lbl">Selengkapnya</span> <?php echo infoIco('chevron', 13); ?>
-                    </button>
-                  <?php elseif ($boleh): ?>
-                    <a href="<?php echo eUrl($tautan); ?>" target="_blank" rel="noopener">
-                      Baca tautan <?php echo infoIco('external', 13); ?>
-                    </a>
-                  <?php endif; ?>
+    <!-- ══════════ TAB 1 — TARIF LAYANAN ══════════ -->
+    <?php if ($tampilTarif): ?>
+      <section class="tabpanel" id="panel-tarif" role="tabpanel" aria-labelledby="tab-tarif" tabindex="0">
+        <div class="seksi-hd">
+          <?php echo infoIco('tarif', 15); ?>
+          <h2><?php echo e($set['tarif_judul_seksi'] ?? 'Tarif Layanan'); ?></h2>
+          <span class="garis"></span>
+          <?php if (count($tarifList) > 0): ?><span class="jml"><?php echo count($tarifList); ?></span><?php endif; ?>
+        </div>
+
+        <?php if (count($tarifList) === 0): ?>
+          <div class="kosong" style="margin-top:10px">
+            <?php echo e($set['pesan_kosong_tarif'] ?? 'Daftar tarif belum tersedia.'); ?>
+          </div>
+        <?php else: ?>
+          <?php if (count($tarifList) > 8): ?>
+            <div class="cari-tarif">
+              <?php echo infoIco('search', 15); ?>
+              <input type="search" id="cariTarif" autocomplete="off"
+                     placeholder="Cari nama layanan atau kategori…"
+                     aria-label="Cari tarif layanan" aria-controls="daftarTarif">
+            </div>
+          <?php endif; ?>
+
+          <div id="daftarTarif">
+            <?php foreach ($tarifKelompok as $kat => $baris): ?>
+              <div class="tarif-grup">
+                <h3><span><?php echo e($kat); ?></span><span class="garis"></span><span class="jml"><?php echo count($baris); ?></span></h3>
+                <div class="tarif-list">
+                  <?php foreach ($baris as $t): ?>
+                    <div class="tarif-item"
+                         data-cari="<?php echo e(strtolower($t['nama_layanan'] . ' ' . $kat . ' ' . ($t['satuan'] ?? ''))); ?>">
+                      <span class="nama">
+                        <b><?php echo e($t['nama_layanan']); ?></b>
+                        <?php if (!empty($t['keterangan'])): ?><span><?php echo e($t['keterangan']); ?></span><?php endif; ?>
+                      </span>
+                      <span class="harga">
+                        <b><?php echo e(adminFormatRupiah($t['tarif'] ?? 0)); ?></b>
+                        <?php if (!empty($t['satuan'])): ?><span><?php echo e($t['satuan']); ?></span><?php endif; ?>
+                      </span>
+                    </div>
+                  <?php endforeach; ?>
                 </div>
               </div>
-            </article>
-          <?php endforeach; ?>
-        </div>
-      <?php endif; ?>
-    </section>
+            <?php endforeach; ?>
+          </div>
 
-    <!-- ══════════ PANDUAN (DROPDOWN) ══════════ -->
-    <?php if ($tampilPanduan && count($panduanList) > 0): ?>
-      <section aria-labelledby="hd-panduan">
-        <div class="seksi-hd" id="hd-panduan">
-          <?php echo infoIco('book', 15); ?>
-          <h2><?php echo e($set['panduan_judul_seksi'] ?? 'Panduan Pemakaian'); ?></h2>
-          <span class="garis"></span>
-          <span class="jml"><?php echo count($panduanList); ?></span>
-        </div>
-
-        <div class="akordion" id="akordion" style="margin-top:10px" data-satu="<?php echo $satuBuka ? '1' : '0'; ?>">
-          <?php foreach ($panduanList as $i => $p):
-              $ringkas = adminRingkas($p['isi'] ?? '', 58);
-          ?>
-            <details class="ak-item"<?php echo $i === 0 ? ' open' : ''; ?>>
-              <summary>
-                <span class="no"><?php echo infoIco(!empty($p['ikon']) ? $p['ikon'] : 'info', 15); ?></span>
-                <span class="judul">
-                  <b><?php echo e($p['judul']); ?></b>
-                  <?php if ($ringkas !== ''): ?><span><?php echo e($ringkas); ?></span><?php endif; ?>
-                </span>
-                <span class="chev"><?php echo infoIco('chevron', 17); ?></span>
-              </summary>
-              <div class="ak-body"><?php echo adminFormatTeks($p['isi'] ?? ''); ?></div>
-            </details>
-          <?php endforeach; ?>
-        </div>
+          <div class="kosong" id="tarifKosong" style="margin-top:10px" hidden>
+            Tidak ada layanan yang cocok dengan kata kunci tersebut.
+          </div>
+          <?php if ($tarifCatatan !== ''): ?>
+            <div class="catatan-tarif"><?php echo e($tarifCatatan); ?></div>
+          <?php endif; ?>
+        <?php endif; ?>
       </section>
     <?php endif; ?>
 
-    <!-- ══════════ KONTAK ══════════ -->
+    <!-- ══════════ TAB 2 — PANDUAN (DROPDOWN) ══════════ -->
+    <?php if ($tampilPanduan): ?>
+      <section class="tabpanel" id="panel-panduan" role="tabpanel" aria-labelledby="tab-panduan" tabindex="0" hidden>
+        <div class="seksi-hd">
+          <?php echo infoIco('book', 15); ?>
+          <h2><?php echo e($set['panduan_judul_seksi'] ?? 'Panduan Pemakaian'); ?></h2>
+          <span class="garis"></span>
+          <?php if (count($panduanList) > 0): ?><span class="jml"><?php echo count($panduanList); ?></span><?php endif; ?>
+        </div>
+
+        <?php if (count($panduanList) === 0): ?>
+          <div class="kosong" style="margin-top:10px">Belum ada panduan yang ditambahkan.</div>
+        <?php else: ?>
+          <div class="akordion" id="akordion" style="margin-top:10px" data-satu="<?php echo $satuBuka ? '1' : '0'; ?>">
+            <?php foreach ($panduanList as $i => $p):
+                $ringkas = adminRingkas($p['isi'] ?? '', 58);
+            ?>
+              <details class="ak-item"<?php echo $i === 0 ? ' open' : ''; ?>>
+                <summary>
+                  <span class="no"><?php echo infoIco(!empty($p['ikon']) ? $p['ikon'] : 'info', 15); ?></span>
+                  <span class="judul">
+                    <b><?php echo e($p['judul']); ?></b>
+                    <?php if ($ringkas !== ''): ?><span><?php echo e($ringkas); ?></span><?php endif; ?>
+                  </span>
+                  <span class="chev"><?php echo infoIco('chevron', 17); ?></span>
+                </summary>
+                <div class="ak-body"><?php echo adminFormatTeks($p['isi'] ?? ''); ?></div>
+              </details>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+      </section>
+    <?php endif; ?>
+
+    <!-- ══════════ TAB 3 — KONTAK & LAYANAN ══════════ -->
     <?php if ($tampilKontak):
         $wa      = infoNomorWa($set['whatsapp'] ?? '');
         $barisK  = [];
@@ -617,14 +762,16 @@ header('Pragma: no-cache');
         if (!empty($set['email']))       $barisK[] = ['ikon' => 'mail', 'label' => 'Email', 'nilai' => $set['email'], 'link' => 'mailto:' . $set['email']];
         if (!empty($set['website']))     $barisK[] = ['ikon' => 'globe', 'label' => 'Website', 'nilai' => preg_replace('#^https?://#i', '', (string) $set['website']), 'link' => $set['website']];
     ?>
-      <?php if (count($barisK) > 0): ?>
-        <section aria-labelledby="hd-kontak">
-          <div class="seksi-hd" id="hd-kontak">
-            <?php echo infoIco('phone', 15); ?>
-            <h2><?php echo e($set['kontak_judul_seksi'] ?? 'Kontak & Layanan'); ?></h2>
-            <span class="garis"></span>
-          </div>
+      <section class="tabpanel" id="panel-kontak" role="tabpanel" aria-labelledby="tab-kontak" tabindex="0" hidden>
+        <div class="seksi-hd">
+          <?php echo infoIco('phone', 15); ?>
+          <h2><?php echo e($set['kontak_judul_seksi'] ?? 'Kontak & Layanan'); ?></h2>
+          <span class="garis"></span>
+        </div>
 
+        <?php if (count($barisK) === 0): ?>
+          <div class="kosong" style="margin-top:10px">Informasi kontak belum diisi.</div>
+        <?php else: ?>
           <div class="kontak" style="margin-top:10px">
             <?php foreach ($barisK as $b):
                 $tag = (!empty($b['link']) && preg_match('#^(https?://|mailto:|tel:)#i', (string) $b['link'])) ? 'a' : 'div';
@@ -636,8 +783,8 @@ header('Pragma: no-cache');
               </<?php echo $tag; ?>>
             <?php endforeach; ?>
           </div>
-        </section>
-      <?php endif; ?>
+        <?php endif; ?>
+      </section>
     <?php endif; ?>
 
   </div>
@@ -742,6 +889,93 @@ header('Pragma: no-cache');
         if (!d.open) return;
         items.forEach(function(o){ if (o !== d && o.open) o.open = false; });
       });
+    });
+  }
+
+  /* ---------- navigasi tab: Tarif / Panduan / Kontak ----------
+     Berpindah "halaman" tanpa memuat ulang informasi.php: panel disembunyikan
+     lewat atribut hidden, posisi terakhir diingat lewat hash + localStorage. */
+  var nav = document.getElementById('tabnav');
+  if (nav) {
+    var tombol = Array.prototype.slice.call(nav.querySelectorAll('button[role="tab"]'));
+    var KEY_TAB = 'rsudTabInformasi';
+
+    function adaTab(id) {
+      return tombol.some(function(b){ return b.getAttribute('data-tab') === id; });
+    }
+    function tabAwal() {
+      var dariHash = (location.hash || '').replace('#', '');
+      if (adaTab(dariHash)) return dariHash;
+      try {
+        var simpan = window.localStorage.getItem(KEY_TAB);
+        if (adaTab(simpan)) return simpan;
+      } catch (e) { /* localStorage diblokir (mis. mode privat) — abaikan */ }
+      return nav.getAttribute('data-tab-awal') || (tombol[0] && tombol[0].getAttribute('data-tab'));
+    }
+    function buka(id, fokus) {
+      if (!adaTab(id)) return;
+      tombol.forEach(function(b){
+        var aktif = b.getAttribute('data-tab') === id;
+        b.setAttribute('aria-selected', aktif ? 'true' : 'false');
+        b.setAttribute('tabindex', aktif ? '0' : '-1');
+        var panel = document.getElementById('panel-' + b.getAttribute('data-tab'));
+        if (panel) panel.hidden = !aktif;
+        if (aktif && fokus) b.focus();
+      });
+      try { window.localStorage.setItem(KEY_TAB, id); } catch (e) {}
+      if (location.hash !== '#' + id) {
+        try { history.replaceState(null, '', '#' + id); } catch (e) { location.hash = id; }
+      }
+    }
+
+    tombol.forEach(function(b, i){
+      b.addEventListener('click', function(){ buka(b.getAttribute('data-tab')); });
+      b.addEventListener('keydown', function(ev){
+        var n = null;
+        if (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') n = (i + 1) % tombol.length;
+        else if (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') n = (i - 1 + tombol.length) % tombol.length;
+        else if (ev.key === 'Home') n = 0;
+        else if (ev.key === 'End') n = tombol.length - 1;
+        if (n === null) return;
+        ev.preventDefault();
+        buka(tombol[n].getAttribute('data-tab'), true);
+      });
+    });
+
+    window.addEventListener('hashchange', function(){
+      var id = (location.hash || '').replace('#', '');
+      if (adaTab(id)) buka(id);
+    });
+
+    buka(tabAwal());
+  }
+
+  /* ---------- cari tarif (menyaring daftar tanpa memuat ulang) ---------- */
+  var cari = document.getElementById('cariTarif');
+  if (cari) {
+    var grup    = Array.prototype.slice.call(document.querySelectorAll('#daftarTarif .tarif-grup'));
+    var kosong  = document.getElementById('tarifKosong');
+    var normalisasi = function (t) {
+      return String(t).toLowerCase().replace(/\s+/g, ' ').trim();
+    };
+    cari.addEventListener('input', function(){
+      var q = normalisasi(cari.value);
+      var kata = q.split(' ').filter(function(k){ return k !== ''; });
+      var totalTampil = 0;
+
+      grup.forEach(function(g){
+        var tampilGrup = 0;
+        g.querySelectorAll('.tarif-item').forEach(function(item){
+          var teks = normalisasi(item.getAttribute('data-cari') || '');
+          var cocok = kata.every(function(k){ return teks.indexOf(k) !== -1; });
+          item.hidden = !cocok;
+          if (cocok) tampilGrup++;
+        });
+        g.hidden = tampilGrup === 0;
+        totalTampil += tampilGrup;
+      });
+
+      if (kosong) kosong.hidden = totalTampil > 0;
     });
   }
 })();
